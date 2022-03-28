@@ -167,7 +167,7 @@ export class EcsMoodleStack extends cdk.Stack {
     const moodleService = new ecs.FargateService(this, 'moodle-service', {
       cluster: cluster,
       taskDefinition: moodleTaskDefinition,
-      desiredCount: 4,
+      desiredCount: 1,
       capacityProviderStrategies: [ // Every 1 task which uses FARGATE, 3 tasks will use FARGATE_SPOT (25% / 75%)
         {
           capacityProvider: 'FARGATE_SPOT',
@@ -182,12 +182,12 @@ export class EcsMoodleStack extends cdk.Stack {
       enableECSManagedTags: true,
       maxHealthyPercent: 200,
       minHealthyPercent: 50,
-      healthCheckGracePeriod: cdk.Duration.seconds(60),
+      healthCheckGracePeriod: cdk.Duration.minutes(30),
       circuitBreaker: { rollback: true }
     });
 
     // Moodle ECS Service Task Auto Scaling
-    const moodleServiceScaling = moodleService.autoScaleTaskCount({ minCapacity: 4, maxCapacity: 10 } );
+    const moodleServiceScaling = moodleService.autoScaleTaskCount({ minCapacity: 1, maxCapacity: 10 } );
     moodleServiceScaling.scaleOnCpuUtilization('cpu-scaling', {
       targetUtilizationPercent: 50
     });
