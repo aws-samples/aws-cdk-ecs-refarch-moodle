@@ -62,7 +62,7 @@ The following are the steps to deploy the solution:
 12. Finally, to improve Moodle application performance, configure Moodle caching using the ElastiCache Redis endpoint described in the `MOODLEREDISPRIMARYENDPOINTADDRESSANDPORT` output.
     - Add the cache store instance using the ElastiCache Redis endpoint. Refer to the following documentation: [Adding cache store instances](https://docs.moodle.org/311/en/Caching#Adding_cache_store_instances)
     - Set the `Application` cache to use the Redis cache store instance added previously. Refer to the following documentation: [Setting the stores that get used when no mapping is present](https://docs.moodle.org/311/en/Caching#Setting_the_stores_that_get_used_when_no_mapping_is_present)
-13. Scale the number of `desiredCount` and `minCapacity` to adjust the number of replicas. Also configure the `healthCheckGracePeriod` from 30 minutes to 60 seconds in the `src/cdk/lib/ecs-moodle-stack.ts`. Below is an example:
+13. Scale the number of `desiredCount` and `minCapacity` to adjust the number of replicas. Also configure the `healthCheckGracePeriod` from 30 minutes to 120 seconds in the `src/cdk/lib/ecs-moodle-stack.ts`. Below is an example:
 ````
 // Moodle ECS Service
 const moodleService = new ecs.FargateService(this, 'moodle-service', {
@@ -83,7 +83,7 @@ const moodleService = new ecs.FargateService(this, 'moodle-service', {
   enableECSManagedTags: true,
   maxHealthyPercent: 200,
   minHealthyPercent: 50,
-  healthCheckGracePeriod: cdk.Duration.seconds(60) // Modify the healthCheckGracePeriod
+  healthCheckGracePeriod: cdk.Duration.seconds(120) // Modify the healthCheckGracePeriod
 });
 
 // Moodle ECS Service Task Auto Scaling
