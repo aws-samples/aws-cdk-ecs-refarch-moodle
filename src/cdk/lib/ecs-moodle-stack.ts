@@ -229,8 +229,11 @@ export class EcsMoodleStack extends cdk.Stack {
 
     // cloudfront distribution
     new cloudfront.Distribution(this, 'moodle-ecs-dist', {
-      defaultBehavior: { 
-        origin: new origins.LoadBalancerV2Origin(alb),
+      defaultBehavior: {
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        origin: new origins.LoadBalancerV2Origin(alb, {
+          readTimeout: cdk.Duration.seconds(60)
+        }),
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER

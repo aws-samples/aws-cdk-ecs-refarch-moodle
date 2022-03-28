@@ -52,16 +52,17 @@ The following are the steps to deploy the solution:
 2. Replace the `AlbCertificateArn` and `CFCertificateArn` property in the file `src/cdk/bin/cdk.ts` with your ACM certificate ARN. 
 3. Replace the `CFDomain` property in the file `src/cdk/bin/cdk.ts` with the domain name that you would like to use with CloudFront.
 4. Replace the `MoodleImageUri` property in the file `src/cdk/bin/cdk.ts` with the Moodle container image URI that you've pushed before, e.g. `[your-aws-account-id].dkr.ecr.[your-region].amazonaws.com/moodle-image:latest`.
-4. Run `cdk bootstrap` (You only need to perform this once)
-5. Run `cdk deploy` to deploy this solution.
-6. Once successfully deployed, Moodle will begin first-time installation and it will take approximately 15 - 20 minutes. You can check the progress by checking at the logs in ECS console.
-7. Once it is completed, you can access the application endpoint on the ALB endpoint described in the deployment output `APPLICATIONLOADBALANCERDNSNAME`.
-8. (Optional) You can configure a domain record for the ALB endpoint to clear the SSL warning.
-9. Use the username described in `MOODLEUSERNAME` output and fetch the password on Secrets Manager with the ARN described in the `MOODLEPASSWORDSECRETARN` output.
-10. Finally, to improve Moodle application performance, configure Moodle caching using the ElastiCache Redis endpoint described in the `MOODLEREDISPRIMARYENDPOINTADDRESSANDPORT` output.
+5. Go to this directory `cd src/cdk` and then run `npm install`.
+6. Run `cdk bootstrap` (You only need to perform this once)
+7. Run `cdk deploy` to deploy this solution.
+8. Once successfully deployed, Moodle will begin first-time installation and it will take approximately 15 - 20 minutes. You can check the progress by checking at the logs in ECS console.
+9. Once it is completed, you can access the application endpoint on the ALB endpoint described in the deployment output `APPLICATIONLOADBALANCERDNSNAME`.
+10. (Optional) You can configure a domain record for the ALB endpoint to clear the SSL warning.
+11. Use the username described in `MOODLEUSERNAME` output and fetch the password on Secrets Manager with the ARN described in the `MOODLEPASSWORDSECRETARN` output.
+12. Finally, to improve Moodle application performance, configure Moodle caching using the ElastiCache Redis endpoint described in the `MOODLEREDISPRIMARYENDPOINTADDRESSANDPORT` output.
     - Add the cache store instance using the ElastiCache Redis endpoint. Refer to the following documentation: [Adding cache store instances](https://docs.moodle.org/311/en/Caching#Adding_cache_store_instances)
     - Set the `Application` cache to use the Redis cache store instance added previously. Refer to the following documentation: [Setting the stores that get used when no mapping is present](https://docs.moodle.org/311/en/Caching#Setting_the_stores_that_get_used_when_no_mapping_is_present)
-11. Scale the number of `desiredCount` and `minCapacity` to adjust the number of replicas. Also configure the `healthCheckGracePeriod` from 30 minutes to 60 seconds in the `src/cdk/lib/ecs-moodle-stack.ts`. Below is an example:
+13. Scale the number of `desiredCount` and `minCapacity` to adjust the number of replicas. Also configure the `healthCheckGracePeriod` from 30 minutes to 60 seconds in the `src/cdk/lib/ecs-moodle-stack.ts`. Below is an example:
 ````
 // Moodle ECS Service
 const moodleService = new ecs.FargateService(this, 'moodle-service', {
@@ -91,6 +92,7 @@ moodleServiceScaling.scaleOnCpuUtilization('cpu-scaling', {
   targetUtilizationPercent: 50
 });
 ````
+14. Due to the Moodle software design, some long-running operations are being done synchronously. For example, administrator would like to install a plugin and then submit the request; Instead of performing the task in the background, Moodle will process the request and browser will wait for the Moodle server to finish the installation and return the response where it can take sometime to complete. The current CloudFront origin response timeout is being set to the maximum allowed by default which is 60 seconds. We recommend to increase this to 180 seconds to avoid issues caused by CloudFront dropping the connection while operations are still running. For more details, please refer to this [documentation](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/distribution-web-values-specify.html#DownloadDistValuesOriginResponseTimeout).
 
 ___
 
