@@ -69,6 +69,7 @@ export class EcsMoodleStack extends cdk.Stack {
     const moodleEfs = new efs.FileSystem(this, 'moodle-efs', {
       vpc: vpc,
       lifecyclePolicy: efs.LifecyclePolicy.AFTER_30_DAYS,
+      outOfInfrequentAccessPolicy: efs.OutOfInfrequentAccessPolicy.AFTER_1_ACCESS,
       performanceMode: efs.PerformanceMode.GENERAL_PURPOSE,
       throughputMode: efs.ThroughputMode.BURSTING,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
