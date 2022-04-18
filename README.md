@@ -1,4 +1,4 @@
-# Moodle LMS on AWS Serverless Containers
+# Running Moodle LMS on AWS Serverless Containers
 
 Moodle is a popular open source learning management system (LMS). Many education institutions are using Moodle to provide an online learning platform for their students to achieve their learning goals. It is especially critical due to the impact of Covid-19 on the face-to-face learning process.
 
