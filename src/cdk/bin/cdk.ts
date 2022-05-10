@@ -4,8 +4,11 @@ import { EcsMoodleStack } from '../lib/ecs-moodle-stack';
 
 const app = new cdk.App();
 new EcsMoodleStack(app, 'ecs-moodle-stack', {
-  AlbCertificateArn: '',
-  CFCertificateArn: '',
-  CFDomain: '',
-  MoodleImageUri: ''
+  albCertificateArn: app.node.tryGetContext('app-config/albCertificateArn'),
+  cfCertificateArn: app.node.tryGetContext('app-config/cfCertificateArn'),
+  cfDomain: app.node.tryGetContext('app-config/cfDomain'),
+  moodleImageUri: app.node.tryGetContext('app-config/moodleImageUri'),
+  serviceReplicaDesiredCount: app.node.tryGetContext('app-config/serviceReplicaDesiredCount'),
+  serviceHealthCheckGracePeriodSeconds: app.node.tryGetContext('app-config/serviceHealthCheckGracePeriodSeconds'),
+  cfDistributionOriginTimeoutSeconds: app.node.tryGetContext('app-config/cfDistributionOriginTimeoutSeconds')
 });
