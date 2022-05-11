@@ -73,21 +73,8 @@ export class EcsMoodleStack extends cdk.Stack {
       credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, { excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\' }), // Punctuations are causing issue with Moodle connecting to the database
       enablePerformanceInsights: true,
       backupRetention: cdk.Duration.days(7),
-      storageEncrypted: true,
-      deletionProtection: true
+      storageEncrypted: true
     });
-    cdknag.NagSuppressions.addResourceSuppressions(moodleDb, [
-      {
-        id: 'AwsSolutions-SMG4',
-        reason: 'Moodle does not support Secrets Manager integration.'
-      }
-    ], true);
-    cdknag.NagSuppressions.addResourceSuppressions(moodleDb, [
-      {
-        id: 'AwsSolutions-RDS11',
-        reason: 'Optional security through obfuscation.'
-      }
-    ]);
 
     // EFS
     const moodleEfs = new efs.FileSystem(this, 'moodle-efs', {
@@ -117,22 +104,9 @@ export class EcsMoodleStack extends cdk.Stack {
       autoMinorVersionUpgrade: true,
       cacheSubnetGroupName: 'moodle-redis-private-subnet-group',
       securityGroupIds: [ redisSG.securityGroupId ],
-      atRestEncryptionEnabled: true,
-      transitEncryptionEnabled: true
+      atRestEncryptionEnabled: true
     });
     moodleRedis.addDependsOn(redisSubnetGroup);
-    cdknag.NagSuppressions.addResourceSuppressions(moodleRedis, [
-      {
-        id: 'AwsSolutions-AEC5',
-        reason: 'Optional security through obfuscation.'
-      }
-    ]);
-    cdknag.NagSuppressions.addResourceSuppressions(moodleRedis, [
-      {
-        id: 'AwsSolutions-AEC6',
-        reason: 'No way to use secrets manager to supply the AuthToken.'
-      }
-    ]);
 
     // Moodle ECS Task Definition
     const moodleTaskDefinition = new ecs.FargateTaskDefinition(this, 'moodle-task-def', {
@@ -203,25 +177,6 @@ export class EcsMoodleStack extends cdk.Stack {
       readOnly: false
     });
 
-    cdknag.NagSuppressions.addResourceSuppressions(moodleTaskDefinition, [
-      {
-        id: 'AwsSolutions-ECS2',
-        reason: 'Secrets are injected properly.'
-      }
-    ]);
-    cdknag.NagSuppressions.addResourceSuppressions(moodleTaskDefinition, [
-      {
-        id: 'AwsSolutions-IAM5',
-        reason: 'Default IAM permissions from CDK abstraction.'
-      }
-    ], true);
-    cdknag.NagSuppressions.addResourceSuppressions(moodlePasswordSecret, [
-      {
-        id: 'AwsSolutions-SMG4',
-        reason: 'The password is for Moodle Admin credentials which will be resetted through Moodle GUI.'
-      }
-    ]);
-
     // Moodle ECS Service
     const moodleService = new ecs.FargateService(this, 'moodle-service', {
       cluster: cluster,
@@ -285,18 +240,6 @@ export class EcsMoodleStack extends cdk.Stack {
         })
       ]
     });
-    cdknag.NagSuppressions.addResourceSuppressions(alb, [
-      {
-        id: 'AwsSolutions-ELB2',
-        reason: 'Setting the access logs on the ALB throws new error "Unsupported feature flag". Surpressing it for now.'
-      }
-    ]);
-    cdknag.NagSuppressions.addResourceSuppressions(alb, [
-      {
-        id: 'AwsSolutions-EC23',
-        reason: 'ALB is open for TCP 80 and TCP 443 for incoming HTTP and HTTPS.'
-      }
-    ], true);
 
     // cloudfront distribution
     const cf = new cloudfront.Distribution(this, 'moodle-ecs-dist', {
@@ -312,19 +255,75 @@ export class EcsMoodleStack extends cdk.Stack {
       domainNames: [props.cfDomain.toString()],
       certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString())
     });
+
+    // CDK Nag rules surpressions
+    cdknag.NagSuppressions.addResourceSuppressions(moodleDb, [
+      {
+        id: 'AwsSolutions-SMG4',
+        reason: 'Moodle does not support Secrets Manager integration.'
+      },
+      {
+        id: 'AwsSolutions-RDS10',
+        reason: 'Allow users to use cdk destroy without issues as per the blog intended.'
+      },
+      {
+        id: 'AwsSolutions-RDS11',
+        reason: 'Optional security through obfuscation.'
+      },
+      {
+        id: 'AwsSolutions-RDS15',
+        reason: 'Allow users to use cdk destroy without issues as per the blog intended.'
+      }
+    ], true);
+    cdknag.NagSuppressions.addResourceSuppressions(moodleRedis, [
+      {
+        id: 'AwsSolutions-AEC5',
+        reason: 'Optional security through obfuscation.'
+      },
+      {
+        id: 'AwsSolutions-AEC6',
+        reason: 'No way to use secrets manager to supply the AuthToken.'
+      },
+      {
+        id: 'AwsSolutions-AEC3',
+        reason: 'Moodle does not support Redis with in-transit encryption.'
+      }
+    ]);
+    cdknag.NagSuppressions.addResourceSuppressions(moodleTaskDefinition, [
+      {
+        id: 'AwsSolutions-ECS2',
+        reason: 'Secrets are injected properly.'
+      },
+      {
+        id: 'AwsSolutions-IAM5',
+        reason: 'Default IAM permissions from CDK abstraction.'
+      }
+    ], true);
+    cdknag.NagSuppressions.addResourceSuppressions(moodlePasswordSecret, [
+      {
+        id: 'AwsSolutions-SMG4',
+        reason: 'The password is for Moodle Admin credentials which will be resetted through Moodle GUI.'
+      }
+    ]);
+    cdknag.NagSuppressions.addResourceSuppressions(alb, [
+      {
+        id: 'AwsSolutions-ELB2',
+        reason: 'Setting the access logs on the ALB throws new error "Unsupported feature flag". Surpressing it for now.'
+      },
+      {
+        id: 'AwsSolutions-EC23',
+        reason: 'ALB is open for TCP 80 and TCP 443 for incoming HTTP and HTTPS.'
+      }
+    ], true);
     cdknag.NagSuppressions.addResourceSuppressions(cf, [
       {
         id: 'AwsSolutions-CFR1',
         reason: 'Geo restriction is not required.'
-      }
-    ]);
-    cdknag.NagSuppressions.addResourceSuppressions(cf, [
+      },
       {
         id: 'AwsSolutions-CFR2',
         reason: 'WAF is out of scope from this technical content.'
-      }
-    ]);
-    cdknag.NagSuppressions.addResourceSuppressions(cf, [
+      },
       {
         id: 'AwsSolutions-CFR3',
         reason: 'Access logs is out of scope from this technical content.'
