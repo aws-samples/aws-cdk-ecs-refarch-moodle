@@ -12,10 +12,13 @@ import iam = require('aws-cdk-lib/aws-iam');
 import cdk = require('aws-cdk-lib');
 
 export interface EcsMoodleStackProps extends cdk.StackProps {
-  AlbCertificateArn: string;
-  CFCertificateArn: string;
-  CFDomain: string;
-  MoodleImageUri: string;
+  albCertificateArn: string;
+  cfCertificateArn: string;
+  cfDomain: string;
+  moodleImageUri: string;
+  serviceReplicaDesiredCount: number;
+  serviceHealthCheckGracePeriodSeconds: number;
+  cfDistributionOriginTimeoutSeconds: number;
 }
 
 export class EcsMoodleStack extends cdk.Stack {
@@ -69,6 +72,7 @@ export class EcsMoodleStack extends cdk.Stack {
     const moodleEfs = new efs.FileSystem(this, 'moodle-efs', {
       vpc: vpc,
       lifecyclePolicy: efs.LifecyclePolicy.AFTER_30_DAYS,
+      outOfInfrequentAccessPolicy: efs.OutOfInfrequentAccessPolicy.AFTER_1_ACCESS,
       performanceMode: efs.PerformanceMode.GENERAL_PURPOSE,
       throughputMode: efs.ThroughputMode.BURSTING,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -135,7 +139,7 @@ export class EcsMoodleStack extends cdk.Stack {
     const moodlePasswordSecret = new secretsmanager.Secret(this, 'moodle-password-secret');
     const moodleContainerDefinition = moodleTaskDefinition.addContainer('moodle-container', {
       containerName: 'moodle',
-      image: ecs.ContainerImage.fromRegistry(props.MoodleImageUri),
+      image: ecs.ContainerImage.fromRegistry(props.moodleImageUri),
       memoryLimitMiB: 4096,
       portMappings: [{ containerPort: 8080 }],
       stopTimeout: cdk.Duration.seconds(120),
@@ -168,7 +172,7 @@ export class EcsMoodleStack extends cdk.Stack {
     const moodleService = new ecs.FargateService(this, 'moodle-service', {
       cluster: cluster,
       taskDefinition: moodleTaskDefinition,
-      desiredCount: 1,
+      desiredCount: props.serviceReplicaDesiredCount,
       capacityProviderStrategies: [ // Every 1 task which uses FARGATE, 3 tasks will use FARGATE_SPOT (25% / 75%)
         {
           capacityProvider: 'FARGATE_SPOT',
@@ -183,12 +187,12 @@ export class EcsMoodleStack extends cdk.Stack {
       enableECSManagedTags: true,
       maxHealthyPercent: 200,
       minHealthyPercent: 50,
-      healthCheckGracePeriod: cdk.Duration.minutes(30),
+      healthCheckGracePeriod: cdk.Duration.seconds(props.serviceHealthCheckGracePeriodSeconds),
       circuitBreaker: { rollback: true }
     });
 
     // Moodle ECS Service Task Auto Scaling
-    const moodleServiceScaling = moodleService.autoScaleTaskCount({ minCapacity: 1, maxCapacity: 10 } );
+    const moodleServiceScaling = moodleService.autoScaleTaskCount({ minCapacity: props.serviceReplicaDesiredCount, maxCapacity: 10 } );
     moodleServiceScaling.scaleOnCpuUtilization('cpu-scaling', {
       targetUtilizationPercent: 50
     });
@@ -215,7 +219,7 @@ export class EcsMoodleStack extends cdk.Stack {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
       open: true,
-      certificates: [ elbv2.ListenerCertificate.fromArn(props.AlbCertificateArn) ]
+      certificates: [ elbv2.ListenerCertificate.fromArn(props.albCertificateArn) ]
     });
     const targetGroup = httpsListener.addTargets('moodle-service-tg', {
       port: 8080,
@@ -233,14 +237,14 @@ export class EcsMoodleStack extends cdk.Stack {
       defaultBehavior: {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         origin: new origins.LoadBalancerV2Origin(alb, {
-          readTimeout: cdk.Duration.seconds(60)
+          readTimeout: cdk.Duration.seconds(props.cfDistributionOriginTimeoutSeconds)
         }),
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER
       },
-      domainNames: [props.CFDomain.toString()],
-      certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.CFCertificateArn.toString()),
+      domainNames: [props.cfDomain.toString()],
+      certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString()),
     });
 
     // Outputs

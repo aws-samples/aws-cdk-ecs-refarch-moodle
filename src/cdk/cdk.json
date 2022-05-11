@@ -10,6 +10,13 @@
     "@aws-cdk/aws-ecs-patterns:removeDefaultDesiredCount": true,
     "@aws-cdk/aws-rds:lowercaseDbIdentifier": true,
     "@aws-cdk/aws-lambda:recognizeVersionProps": true,
-    "@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021": true
+    "@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021": true,
+    "app-config/albCertificateArn": "",
+    "app-config/cfCertificateArn": "",
+    "app-config/cfDomain": "",
+    "app-config/moodleImageUri": "",
+    "app-config/serviceReplicaDesiredCount": 1,
+    "app-config/serviceHealthCheckGracePeriodSeconds": 1800,
+    "app-config/cfDistributionOriginTimeoutSeconds": 60
   }
 }
