@@ -252,7 +252,7 @@ export class EcsMoodleStack extends cdk.Stack {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER
       },
-      domainNames: [props.cfDomain.toString()],
+      domainNames: [props.cfDomain],
       certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString())
     });
 
@@ -333,6 +333,9 @@ export class EcsMoodleStack extends cdk.Stack {
     // Outputs
     new cdk.CfnOutput(this, 'APPLICATION-LOAD-BALANCER-DNS-NAME', {
       value: alb.loadBalancerDnsName
+    });
+    new cdk.CfnOutput(this, 'CLOUDFRONT-DNS-NAME', {
+      value: cf.distributionDomainName
     });
     new cdk.CfnOutput(this, 'MOODLE-USERNAME', {
       value: 'moodleadmin'
