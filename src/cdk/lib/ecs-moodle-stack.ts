@@ -1,15 +1,17 @@
-import ecs = require('aws-cdk-lib/aws-ecs');
-import ec2 = require('aws-cdk-lib/aws-ec2');
-import rds = require('aws-cdk-lib/aws-rds');
-import efs = require('aws-cdk-lib/aws-efs');
-import elbv2 = require('aws-cdk-lib/aws-elasticloadbalancingv2');
-import elasticache = require('aws-cdk-lib/aws-elasticache');
-import secretsmanager = require('aws-cdk-lib/aws-secretsmanager');
-import cloudfront = require('aws-cdk-lib/aws-cloudfront');
-import origins = require('aws-cdk-lib/aws-cloudfront-origins');
-import acm = require('aws-cdk-lib/aws-certificatemanager');
-import iam = require('aws-cdk-lib/aws-iam');
-import cdk = require('aws-cdk-lib');
+import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as rds from 'aws-cdk-lib/aws-rds';
+import * as efs from 'aws-cdk-lib/aws-efs';
+import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as elasticache from 'aws-cdk-lib/aws-elasticache';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as cdk from 'aws-cdk-lib';
+import * as cdknag from 'cdk-nag';
 
 export interface EcsMoodleStackProps extends cdk.StackProps {
   albCertificateArn: string;
@@ -35,7 +37,12 @@ export class EcsMoodleStack extends cdk.Stack {
 
     // VPC
     const vpc = new ec2.Vpc(this, 'moodle-vpc', {
-      maxAzs: 2
+      maxAzs: 2,
+      flowLogs: {
+        'flowlog-to-cloudwatch': {
+          trafficType: ec2.FlowLogTrafficType.ALL
+        }
+      }
     });
     const redisSG = new ec2.SecurityGroup(this, 'moodle-redis-sg', {
       vpc: vpc
@@ -65,8 +72,22 @@ export class EcsMoodleStack extends cdk.Stack {
       databaseName: this.MoodleDatabaseName,
       credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, { excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\' }), // Punctuations are causing issue with Moodle connecting to the database
       enablePerformanceInsights: true,
-      backupRetention: cdk.Duration.days(7)
+      backupRetention: cdk.Duration.days(7),
+      storageEncrypted: true,
+      deletionProtection: true
     });
+    cdknag.NagSuppressions.addResourceSuppressions(moodleDb, [
+      {
+        id: 'AwsSolutions-SMG4',
+        reason: 'Moodle does not support Secrets Manager integration.'
+      }
+    ], true);
+    cdknag.NagSuppressions.addResourceSuppressions(moodleDb, [
+      {
+        id: 'AwsSolutions-RDS11',
+        reason: 'Optional security through obfuscation.'
+      }
+    ]);
 
     // EFS
     const moodleEfs = new efs.FileSystem(this, 'moodle-efs', {
@@ -96,8 +117,22 @@ export class EcsMoodleStack extends cdk.Stack {
       autoMinorVersionUpgrade: true,
       cacheSubnetGroupName: 'moodle-redis-private-subnet-group',
       securityGroupIds: [ redisSG.securityGroupId ],
+      atRestEncryptionEnabled: true,
+      transitEncryptionEnabled: true
     });
     moodleRedis.addDependsOn(redisSubnetGroup);
+    cdknag.NagSuppressions.addResourceSuppressions(moodleRedis, [
+      {
+        id: 'AwsSolutions-AEC5',
+        reason: 'Optional security through obfuscation.'
+      }
+    ]);
+    cdknag.NagSuppressions.addResourceSuppressions(moodleRedis, [
+      {
+        id: 'AwsSolutions-AEC6',
+        reason: 'No way to use secrets manager to supply the AuthToken.'
+      }
+    ]);
 
     // Moodle ECS Task Definition
     const moodleTaskDefinition = new ecs.FargateTaskDefinition(this, 'moodle-task-def', {
@@ -168,6 +203,25 @@ export class EcsMoodleStack extends cdk.Stack {
       readOnly: false
     });
 
+    cdknag.NagSuppressions.addResourceSuppressions(moodleTaskDefinition, [
+      {
+        id: 'AwsSolutions-ECS2',
+        reason: 'Secrets are injected properly.'
+      }
+    ]);
+    cdknag.NagSuppressions.addResourceSuppressions(moodleTaskDefinition, [
+      {
+        id: 'AwsSolutions-IAM5',
+        reason: 'Default IAM permissions from CDK abstraction.'
+      }
+    ], true);
+    cdknag.NagSuppressions.addResourceSuppressions(moodlePasswordSecret, [
+      {
+        id: 'AwsSolutions-SMG4',
+        reason: 'The password is for Moodle Admin credentials which will be resetted through Moodle GUI.'
+      }
+    ]);
+
     // Moodle ECS Service
     const moodleService = new ecs.FargateService(this, 'moodle-service', {
       cluster: cluster,
@@ -208,7 +262,7 @@ export class EcsMoodleStack extends cdk.Stack {
       vpc: vpc,
       internetFacing: true,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC }
-    })
+    });
     const httpListener = alb.addListener('http-listener', { 
       port: 80, 
       protocol: elbv2.ApplicationProtocol.HTTP,
@@ -231,9 +285,21 @@ export class EcsMoodleStack extends cdk.Stack {
         })
       ]
     });
+    cdknag.NagSuppressions.addResourceSuppressions(alb, [
+      {
+        id: 'AwsSolutions-ELB2',
+        reason: 'Setting the access logs on the ALB throws new error "Unsupported feature flag". Surpressing it for now.'
+      }
+    ]);
+    cdknag.NagSuppressions.addResourceSuppressions(alb, [
+      {
+        id: 'AwsSolutions-EC23',
+        reason: 'ALB is open for TCP 80 and TCP 443 for incoming HTTP and HTTPS.'
+      }
+    ], true);
 
     // cloudfront distribution
-    new cloudfront.Distribution(this, 'moodle-ecs-dist', {
+    const cf = new cloudfront.Distribution(this, 'moodle-ecs-dist', {
       defaultBehavior: {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         origin: new origins.LoadBalancerV2Origin(alb, {
@@ -244,8 +310,26 @@ export class EcsMoodleStack extends cdk.Stack {
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER
       },
       domainNames: [props.cfDomain.toString()],
-      certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString()),
+      certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString())
     });
+    cdknag.NagSuppressions.addResourceSuppressions(cf, [
+      {
+        id: 'AwsSolutions-CFR1',
+        reason: 'Geo restriction is not required.'
+      }
+    ]);
+    cdknag.NagSuppressions.addResourceSuppressions(cf, [
+      {
+        id: 'AwsSolutions-CFR2',
+        reason: 'WAF is out of scope from this technical content.'
+      }
+    ]);
+    cdknag.NagSuppressions.addResourceSuppressions(cf, [
+      {
+        id: 'AwsSolutions-CFR3',
+        reason: 'Access logs is out of scope from this technical content.'
+      }
+    ]);
 
     // Outputs
     new cdk.CfnOutput(this, 'APPLICATION-LOAD-BALANCER-DNS-NAME', {
