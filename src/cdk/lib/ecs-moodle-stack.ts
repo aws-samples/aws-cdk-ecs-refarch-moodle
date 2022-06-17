@@ -127,13 +127,13 @@ export class EcsMoodleStack extends cdk.Stack {
     }));
 
     // EFS Volume
-    const moodleVolume = {
+    moodleTaskDefinition.addVolume({
       name: 'moodle',
       efsVolumeConfiguration: {
-        fileSystemId: moodleEfs.fileSystemId
+        fileSystemId: moodleEfs.fileSystemId,
+        transitEncryption: "ENABLED"
       }
-    };
-    moodleTaskDefinition.addVolume(moodleVolume);
+    });
 
     // Workaround for the issue: https://github.com/aws/aws-cdk/issues/15025
     // Add the correct case
