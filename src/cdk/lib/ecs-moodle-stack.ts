@@ -238,7 +238,10 @@ export class EcsMoodleStack extends cdk.Stack {
           containerPort: 8080,
           protocol: ecs.Protocol.TCP
         })
-      ]
+      ],
+      healthCheck: {
+        timeout: cdk.Duration.seconds(20)
+      }
     });
 
     // cloudfront distribution
