@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository consists of an [AWS Cloud Development Kit (AWS CDK)](https://aws.amazon.com/cdk/) application to deploy a highly-available, elastic, and scalable Moodle LMS application using containers technology on AWS by leveraging [Amazon Elastic Container Services (Amazon ECS)](https://aws.amazon.com/ecs/) and [AWS Fargate](https://aws.amazon.com/fargate/).
+This repository consists of an [AWS Cloud Development Kit (AWS CDK)](https://aws.amazon.com/cdk/) application to deploy a highly-available, elastic, and scalable Moodle LMS application using containers technology on AWS by leveraging [Amazon Elastic Container Services (Amazon ECS)](https://aws.amazon.com/ecs/) and [AWS Fargate](https://aws.amazon.com/fargate/). More details on upcoming blog post.
 
 ## Architecture
 
