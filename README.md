@@ -1,4 +1,4 @@
-# Running Moodle LMS with AWS Serverless Containers
+# Modernizing Moodle LMS with AWS Serverless Containers
 
 ## Overview
 
