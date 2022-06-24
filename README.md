@@ -1,35 +1,29 @@
 # Running Moodle LMS with AWS Serverless Containers
 
-Moodle is a popular open source learning management system (LMS). Many education institutions are using Moodle to provide an online learning platform for their students to achieve their learning goals. It is especially critical due to the impact of Covid-19 on the face-to-face learning process.
+## Overview
 
-Moodle itself is a monolith application developed using PHP with database typically using MySQL or PostgreSQL. By default, Moodle stores its application data within the database and also in the filesystem directory called moodledata. To improve performance, Moodle also supports caching services such as Redis or Memcached. Below is the high-level visualization of the infrastructure components within Moodle.
+This repository consists of an [AWS Cloud Development Kit (AWS CDK)](https://aws.amazon.com/cdk/) application to deploy a highly-available, elastic, and scalable Moodle LMS application using containers technology on AWS by leveraging [Amazon Elastic Container Services (Amazon ECS)](https://aws.amazon.com/ecs/) and [AWS Fargate](https://aws.amazon.com/fargate/).
 
-![Moodle Generic Architecture](docs/images/moodle-generic-architecture.jpg)
-
-Many education institutions are deploying and running Moodle on a VM-based environment. They are looking to improve the scalability of their Moodle application, simplify the operations and deployment process, and also optimize its operating costs. One of the approach that we can use to achieve that is by using containers technology. Containers offer a way for developers to package the application code together with its dependencies and configuration, making the deployment of the application to be highly-portable, and can be easily automated to be more reliable and predictable. In this post, we will show you how to deploy and run Moodle on AWS serverless containers technology.
-
-## Solution Overview
-
-AWS offers [Amazon Elastic Container Services (Amazon ECS)](https://aws.amazon.com/ecs/) which is a fully managed container orchestration service that makes it easy for you to deploy, manage, and scale containerized applications. Amazon ECS supports [AWS Fargate](https://aws.amazon.com/fargate/) to provide a serverless, pay-as-you-go compute engine for containerized workload that lets you focus on building applications without managing servers.
-
-Fargate can be configured to use just the right amount of vCPU and memory for your task, so it reduce the need to over-provision compute therefore saving costs. To reduce the costs even further, Fargate also allows customers to launch tasks on spare capacity for a steep discount up to 70% by using a purchase option called Fargate Spot.
+## Architecture
 
 Below is the high-level architecture for the solution.
 
 ![Solution Overview](docs/images/solution-overview.jpg)
 
-The solution is deployed using [AWS Cloud Development Kit (AWS CDK)](https://aws.amazon.com/cdk/) that allows users to define cloud application resources using familiar programming languages. The solution is deployed with high-availability using 2 Availability Zones with the following components:
+The solution is deployed with high-availability using 2 Availability Zones with the following components:
 
-1. [Amazon CloudFront](https://aws.amazon.com/cloudfront/) distribution is created as the endpoint for end-users to access the Moodle application. CloudFront improves the performance of the application by serving the content near to where the end-users are located with low latency. 
-2. Behind CloudFront, the Moodle application traffic is load-balanced using [Application Load Balancer (ALB)](https://aws.amazon.com/elasticloadbalancing/application-load-balancer/) and secured with encryption-in-transit with the TLS certificate stored in [AWS Certificate Manager (ACM)](https://aws.amazon.com/certificate-manager/). ALB automatically distributes the incoming traffic across multiple Moodle instances. It monitors the health of its registered targets, and routes traffic only to the healthy targets. ALB scales the load balancer as the incoming traffic changes over time. ALB functions at the application layer, the seventh layer of the Open Systems Interconnection (OSI) model. 
-3. As the core of the application, the Moodle instances is running on Amazon ECS using combination of Fargate and Fargate Spot. Amazon ECS service will automatically orchestrate multiple Amazon ECS tasks that is running the Moodle containers. The container image for the application is based on [Bitnami Moodle Docker image](https://github.com/bitnami/bitnami-docker-moodle) with some modifications to enable Redis caching integration. The container image is stored in [Amazon Elastic Container Registry (Amazon ECR)](https://aws.amazon.com/ecr/).
-4. To enable sharing of moodledata across multiple Moodle instances, a shared file system is required for this solution. [Amazon Elastic File System (Amazon EFS)](https://aws.amazon.com/efs/) is a simple, serverless, set-and-forget elastic file system that makes it easy to set up, scale, and cost-optimize file storage in AWS. Amazon EFS is deployed and mounted on the ECS tasks to be used as underlying moodle and moodledata filesystem.
-5. The Moodle database is also centralized and deployed into an [Amazon Relational Database Service (Amazon RDS)](https://aws.amazon.com/rds/) instance. Amazon RDS is a managed service that makes it easy to set up, operate, and scale a relational database in the cloud. It provides cost-efficient and resizable capacity, while managing time-consuming database administration tasks, allowing you to focus on your applications and business.
-6. To improve the overall performance of the application, Moodle has a built-in caching mechanism that make use of memory, filesystem, or external cache store such as Memcached or Redis. This solution use [Amazon ElastiCache for Redis](https://aws.amazon.com/elasticache/redis/) as a centralized cache store. ElastiCache for Redis makes it easy to deploy and run Redis protocol-compliant server nodes in AWS.
-7. [AWS Secrets Manager](https://aws.amazon.com/secrets-manager/) is being used during CDK deployment to securely store sensitive data such as database password and Moodle administrator password. AWS Secrets Manager is a secrets management service that helps you protect access to your applications, services, and IT resources.
-8. [Amazon CloudWatch](https://aws.amazon.com/cloudwatch/) is a monitoring service for AWS cloud resources and the applications you run on AWS. You can use Amazon CloudWatch to collect and track metrics, collect and monitor log files, and set alarms. Amazon CloudWatch Logs and CloudWatch Container Insights is enabled in this solution to provide metrics and logs information from Moodle application.
+- [Amazon CloudFront](https://aws.amazon.com/cloudfront/) distribution is created as the endpoint for end-users to access the Moodle application. CloudFront improves the performance of the application by serving the content near to where the end-users are located with low latency. 
+- Behind CloudFront, the Moodle application traffic is load-balanced using [Application Load Balancer (ALB)](https://aws.amazon.com/elasticloadbalancing/application-load-balancer/) and secured with encryption-in-transit with the TLS certificate stored in [AWS Certificate Manager (ACM)](https://aws.amazon.com/certificate-manager/). ALB automatically distributes the incoming traffic across multiple Moodle instances. It monitors the health of its registered targets, and routes traffic only to the healthy targets. ALB scales the load balancer as the incoming traffic changes over time. ALB functions at the application layer, the seventh layer of the Open Systems Interconnection (OSI) model. 
+- As the core of the application, the Moodle instances is running on ECS using combination of Fargate and Fargate Spot. Amazon ECS service will automatically orchestrate multiple Amazon ECS tasks that is running the Moodle containers. The container image for the application is based on [Bitnami Moodle Docker image](https://github.com/bitnami/bitnami-docker-moodle) with some modifications to enable Redis caching integration. The container image is stored in [Amazon Elastic Container Registry (Amazon ECR)](https://aws.amazon.com/ecr/).
+- To enable sharing of moodledata across multiple Moodle instances, a shared file system is required for this solution. [Amazon Elastic File System (Amazon EFS)](https://aws.amazon.com/efs/) is a simple, serverless, set-and-forget elastic file system that makes it easy to set up, scale, and cost-optimize file storage in AWS. Amazon EFS is deployed and mounted on the ECS tasks to be used as underlying moodle and moodledata filesystem.
+- The Moodle database is also centralized and deployed into an [Amazon Relational Database Service (Amazon RDS)](https://aws.amazon.com/rds/) instance. Amazon RDS is a managed service that makes it easy to set up, operate, and scale a relational database in the cloud. It provides cost-efficient and resizable capacity, while managing time-consuming database administration tasks, allowing you to focus on your applications and business.
+- To improve the overall performance of the application, Moodle has a built-in caching mechanism that make use of memory, filesystem, or external cache store such as Memcached or Redis. This solution use [Amazon ElastiCache for Redis](https://aws.amazon.com/elasticache/redis/) as a centralized cache store. ElastiCache for Redis makes it easy to deploy and run Redis protocol-compliant server nodes in AWS.
+- [AWS Secrets Manager](https://aws.amazon.com/secrets-manager/) is being used during CDK deployment to securely store sensitive data such as database password and Moodle administrator password. AWS Secrets Manager is a secrets management service that helps you protect access to your applications, services, and IT resources.
+- [Amazon CloudWatch](https://aws.amazon.com/cloudwatch/) is a monitoring service for AWS cloud resources and the applications you run on AWS. You can use Amazon CloudWatch to collect and track metrics, collect and monitor log files, and set alarms. Amazon CloudWatch Logs and CloudWatch Container Insights is enabled in this solution to provide metrics and logs information from Moodle application.
 
-## Deploying the Solution
+___
+
+## Deployment
 
 ### Prerequisites
 
@@ -38,8 +32,10 @@ The solution is deployed using [AWS Cloud Development Kit (AWS CDK)](https://aws
 3. Install Docker: https://docs.docker.com/engine/install/
 4. Pull the source code into your machine
     git clone https://github.com/aws-samples/aws-cdk-ecs-refarch-moodle.git
-5. Setup a public domain name in order to request a public certificate in AWS Certificate Manager. If you don’t have a public domain name yet, you can use [Amazon Route 53](https://aws.amazon.com/route53/) to [register a new domain](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/domain-register.html). This domain name will also be used for CloudFront alternative domain name
-6. [Request two public certificates](https://docs.aws.amazon.com/acm/latest/userguide/gs-acm-request-public.html) for your domain name using AWS Certificate Manager (ACM). The first one is for the Application Load Balancer where this solution will be deployed (e.g. ap-southeast-1), the second one is for the CloudFront in the us-east-1 region. For example: `moodle.example.com` or `*.example.com`. Note the certificate ARNs to be used in the deployment steps.
+
+### Setting up Domain Name and TLS Certificate
+1. Setup a public domain name in order to request a public certificate in AWS Certificate Manager. If you don’t have a public domain name yet, you can use [Amazon Route 53](https://aws.amazon.com/route53/) to [register a new domain](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/domain-register.html). This domain name will also be used for CloudFront alternative domain name
+2. [Request two public certificates](https://docs.aws.amazon.com/acm/latest/userguide/gs-acm-request-public.html) for your domain name using AWS Certificate Manager (ACM). The first one is for the Application Load Balancer where this solution will be deployed (e.g. ap-southeast-1), the second one is for the CloudFront in the us-east-1 region. For example: `moodle.example.com` or `*.example.com`. Note the certificate ARNs to be used in the deployment steps.
 
 ### Publishing Moodle Container Image into Amazon Elastic Container Registry (Amazon ECR)
 
@@ -87,28 +83,8 @@ Prior to deploying the solution, you must first build the Moodle container image
 10. You can scale the number of the Moodle instance replicas by configuring `app-config/serviceReplicaDesiredCount` context in the file `src/cdk/cdk.json`. You can also configure the `app-config/serviceHealthCheckGracePeriodSeconds` context from 1800 to 300 seconds. You can run `cdk diff` to view the comparison between the current version with the already-deployed version. You can then run `cdk deploy` again to apply the latest configurations.
 11. To access the Moodle application from CloudFront endpoint, you will need to create a CNAME DNS record using the domain name that you’ve configured in step 1b with record value specified in `CLOUDFRONTDNSNAME` output. For example: `moodle.example.com`. If you are getting 502 error, it might be the TLS handshake between CloudFront and ALB is failing because of the domain name in the TLS certificate for ALB does not match with the `Host` header forwarded from CloudFront (The `Host` header in this case will be the domain name that you are using to access CloudFront). 
 
-> **Note:** Due to the Moodle software design, some long-running operations are being done synchronously. For example, administrator would like to install a plugin and then submit the request. Instead of performing the task in the background, Moodle will process the request and browser will wait for the Moodle server to finish the installation and return the response where it can take sometime to complete. The current CloudFront origin response timeout is being set to the maximum allowed by default which is 60 seconds. We recommend to increase this to 180 seconds to avoid issues caused by CloudFront dropping the connection while operations are still running. You can submit the request to increase the timeout by [creating a case in the AWS Support Center](https://console.aws.amazon.com/support/home?region=us-east-1#/case/create?issueType=service-limit-increase&limitType=service-code-cloudfront-distributions). Once the request has been approved, you can configure the `app-config/cfDistributionOriginTimeoutSeconds` context to the duration that you’ve requested.
+> **Note:** Due to the Moodle software design, some long-running operations are being done synchronously. For example, administrator would like to install a plugin and then submit the request. Instead of performing the task in the background, Moodle will process the request and browser will wait for the Moodle server to finish the installation and return the response where it can take sometime to complete. The current CloudFront origin response timeout is being set to the maximum allowed by default which is 60 seconds. We recommend to increase this to 180 seconds to avoid issues caused by CloudFront dropping the connection while operations are still running. You can submit the request to increase the timeout by [creating a case in the AWS Support Center](https://console.aws.amazon.com/support/home?region=us-east-1#/case/create?issueType=service-limit-increase&limitType=service-code-cloudfront-distributions). Once the request has been approved, you can configure the `app-config/cfDistributionOriginTimeoutSeconds` context to the duration that you’ve requested. Alternatively site administrator can use Application Load Balancer endpoint to perform long-running operations.
 
 ### Teardown
 
-You should consider deleting the application infrastructure once you no longer need it to save costs. You can run `cdk destroy` to delete the CDK application.
-
-## Conclusion
-
-In this post, we covered how you can deploy Moodle LMS using serverless containers technology on AWS to help remove the heavy-lifting in managing the servers. We want to hear more on your experience and how we can improve it, so please provide feedback in GitHub using the “Issues” feature.
-
-You can also find more information about each of the AWS services used for this solution in the AWS guides:
-
-* [Amazon ECS Developer Guide](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/Welcome.html)
-* [Amazon EFS User Guide](https://docs.aws.amazon.com/efs/latest/ug/whatisefs.html)
-* [Amazon RDS User Guide](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Welcome.html)
-* [ElastiCache for Redis User Guide](https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/SelectEngine.html)
-* [User Guide for Application Load Balancers](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html)
-* [Amazon CloudFront Developer Guide](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Introduction.html)
-* [Amazon CloudWatch User Guide](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/WhatIsCloudWatch.html)
-
-Visit various blogs that features common use-cases and integrations within Moodle such as:
-
-* [Create LTI-ready virtual classroom experiences with Amazon Chime SDK](https://aws.amazon.com/blogs/business-productivity/create-lti-ready-virtual-classroom-experiences-with-amazon-chime-sdk/)
-* [Integrating Amazon AppStream 2.0 with your Learning Management System](https://aws.amazon.com/blogs/publicsector/integrating-amazon-appstream-2-0-with-your-learning-management-system/)
-
+You can run `cdk destroy` to delete the CDK application.
