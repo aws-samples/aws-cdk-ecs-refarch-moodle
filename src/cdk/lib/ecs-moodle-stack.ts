@@ -9,6 +9,7 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as cloudtrail from 'aws-cdk-lib/aws-cloudtrail';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cdk from 'aws-cdk-lib';
 import * as cdknag from 'cdk-nag';
@@ -35,6 +36,16 @@ export class EcsMoodleStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
 
+    // CloudTrail
+    const trailBucket = new s3.Bucket(this, 'cloudtrail-bucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      encryption: s3.BucketEncryption.S3_MANAGED
+    });
+    const trail = new cloudtrail.Trail(this, 'cloudtrail-trail', {
+      bucket: trailBucket
+    });
+
     // VPC
     const vpc = new ec2.Vpc(this, 'moodle-vpc', {
       maxAzs: 2,
@@ -44,8 +55,13 @@ export class EcsMoodleStack extends cdk.Stack {
         }
       }
     });
-    const redisSG = new ec2.SecurityGroup(this, 'moodle-redis-sg', {
-      vpc: vpc
+    // Amazon ECS tasks hosted on Fargate using platform version 1.4.0 or later require both Amazon ECR VPC endpoints and the Amazon S3 gateway endpoints.
+    // Reference: https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html#ecr-setting-up-vpc-create
+    const ecrVpcEndpoint = vpc.addInterfaceEndpoint('ecr-vpc-endpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.ECR
+    });
+    const s3VpcEndpoint = vpc.addGatewayEndpoint('s3-vpc-endpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.S3
     });
 
     // ECS Cluster
@@ -86,8 +102,15 @@ export class EcsMoodleStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       enableAutomaticBackups: true
     });
+    const moodleEfsAccessPoint = moodleEfs.addAccessPoint('moodle-efs-access-point', {
+      path: '/'
+    });
 
     // ElastiCache Redis
+    const redisSG = new ec2.SecurityGroup(this, 'moodle-redis-sg', {
+      vpc: vpc
+    });
+
     const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'redis-subnet-group', {
       cacheSubnetGroupName: 'moodle-redis-private-subnet-group',
       description: 'Moodle Redis Subnet Group',
@@ -131,7 +154,10 @@ export class EcsMoodleStack extends cdk.Stack {
       name: 'moodle',
       efsVolumeConfiguration: {
         fileSystemId: moodleEfs.fileSystemId,
-        transitEncryption: "ENABLED"
+        transitEncryption: "ENABLED",
+        authorizationConfig: {
+          accessPointId: moodleEfsAccessPoint.accessPointId
+        }
       }
     });
 
@@ -139,6 +165,10 @@ export class EcsMoodleStack extends cdk.Stack {
     // Add the correct case
     (moodleTaskDefinition.node.defaultChild as ecs.CfnTaskDefinition).addPropertyOverride(`Volumes.0.EFSVolumeConfiguration`, {
         FilesystemId: moodleEfs.fileSystemId,
+        transitEncryption: "ENABLED",
+        authorizationConfig: {
+          accessPointId: moodleEfsAccessPoint.accessPointId
+        }
     });
     // Delete the wrong case
     (moodleTaskDefinition.node.defaultChild as ecs.CfnTaskDefinition).addPropertyDeletionOverride(`Volumes.0.EfsVolumeConfiguration`);
@@ -260,6 +290,12 @@ export class EcsMoodleStack extends cdk.Stack {
     });
 
     // CDK Nag rules surpressions
+    cdknag.NagSuppressions.addResourceSuppressions(trailBucket, [
+      {
+        id: 'AwsSolutions-S1',
+        reason: 'Access logs is out of scope from this technical content.'
+      }
+    ]);
     cdknag.NagSuppressions.addResourceSuppressions(moodleDb, [
       {
         id: 'AwsSolutions-SMG4',
