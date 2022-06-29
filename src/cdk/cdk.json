@@ -17,6 +17,7 @@
     "app-config/moodleImageUri": "",
     "app-config/serviceReplicaDesiredCount": 1,
     "app-config/serviceHealthCheckGracePeriodSeconds": 1800,
-    "app-config/cfDistributionOriginTimeoutSeconds": 60
+    "app-config/cfDistributionOriginTimeoutSeconds": 60,
+    "app-config/rdsEventSubscriptionEmailAddress": "user@example.com"
   }
 }

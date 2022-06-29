@@ -11,7 +11,8 @@ new EcsMoodleStack(app, 'ecs-moodle-stack', {
   moodleImageUri: app.node.tryGetContext('app-config/moodleImageUri'),
   serviceReplicaDesiredCount: app.node.tryGetContext('app-config/serviceReplicaDesiredCount'),
   serviceHealthCheckGracePeriodSeconds: app.node.tryGetContext('app-config/serviceHealthCheckGracePeriodSeconds'),
-  cfDistributionOriginTimeoutSeconds: app.node.tryGetContext('app-config/cfDistributionOriginTimeoutSeconds')
+  cfDistributionOriginTimeoutSeconds: app.node.tryGetContext('app-config/cfDistributionOriginTimeoutSeconds'),
+  rdsEventSubscriptionEmailAddress: app.node.tryGetContext('app-config/rdsEventSubscriptionEmailAddress')
 });
 
 cdk.Aspects.of(app).add(new AwsSolutionsChecks({ verbose: true }));
