@@ -11,6 +11,8 @@ import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as cloudtrail from 'aws-cdk-lib/aws-cloudtrail';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cdk from 'aws-cdk-lib';
 import * as cdknag from 'cdk-nag';
 
@@ -22,6 +24,7 @@ export interface EcsMoodleStackProps extends cdk.StackProps {
   serviceReplicaDesiredCount: number;
   serviceHealthCheckGracePeriodSeconds: number;
   cfDistributionOriginTimeoutSeconds: number;
+  rdsEventSubscriptionEmailAddress: string;
 }
 
 export class EcsMoodleStack extends cdk.Stack {
@@ -90,6 +93,14 @@ export class EcsMoodleStack extends cdk.Stack {
       enablePerformanceInsights: true,
       backupRetention: cdk.Duration.days(7),
       storageEncrypted: true
+    });
+    const rdsEventSubscriptionTopic = new sns.Topic(this, 'rds-event-subscription-topic', { });
+    rdsEventSubscriptionTopic.addSubscription(new subscriptions.EmailSubscription(props.rdsEventSubscriptionEmailAddress));
+    const rdsEventSubscription = new rds.CfnEventSubscription(this, 'rds-event-subscription', {
+      enabled: true,
+      snsTopicArn: rdsEventSubscriptionTopic.topicArn,
+      sourceType: 'db-instance',
+      eventCategories: [ 'availability', 'configuration change', 'failure', 'maintenance', 'low storage']
     });
 
     // EFS
@@ -289,7 +300,7 @@ export class EcsMoodleStack extends cdk.Stack {
       certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString())
     });
 
-    // CDK Nag rules surpressions
+    //#region CDK Nag rules surpressions
     cdknag.NagSuppressions.addResourceSuppressions(trailBucket, [
       {
         id: 'AwsSolutions-S1',
@@ -314,6 +325,16 @@ export class EcsMoodleStack extends cdk.Stack {
         reason: 'Allow users to use cdk destroy without issues as per the blog intended.'
       }
     ], true);
+    cdknag.NagSuppressions.addResourceSuppressions(rdsEventSubscriptionTopic, [
+      {
+        id: 'AwsSolutions-SNS2',
+        reason: 'SNS topic configuration is out-of-scope from this technical content.'
+      },
+      {
+        id: 'AwsSolutions-SNS3',
+        reason: 'SNS topic configuration is out-of-scope from this technical content.'
+      }
+    ]);
     cdknag.NagSuppressions.addResourceSuppressions(moodleRedis, [
       {
         id: 'AwsSolutions-AEC5',
@@ -368,6 +389,7 @@ export class EcsMoodleStack extends cdk.Stack {
         reason: 'Access logs is out of scope from this technical content.'
       }
     ]);
+    //#endregion
 
     // Outputs
     new cdk.CfnOutput(this, 'APPLICATION-LOAD-BALANCER-DNS-NAME', {
