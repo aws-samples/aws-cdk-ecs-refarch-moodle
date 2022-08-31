@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 import cdk = require('aws-cdk-lib');
 import { EcsMoodleStack } from '../lib/ecs-moodle-stack';
-import { AwsSolutionsChecks } from 'cdk-nag';
+import { CloudFrontWAFWebAclStack } from '../lib/cloudfront-waf-web-acl-stack';
 
 const app = new cdk.App();
+
+new CloudFrontWAFWebAclStack(app, 'cloudfront-waf-web-acl-stack', {
+  env: {
+    region: 'us-east-1'
+  }
+});
+
 new EcsMoodleStack(app, 'ecs-moodle-stack', {
   albCertificateArn: app.node.tryGetContext('app-config/albCertificateArn'),
   cfCertificateArn: app.node.tryGetContext('app-config/cfCertificateArn'),
@@ -14,5 +21,3 @@ new EcsMoodleStack(app, 'ecs-moodle-stack', {
   cfDistributionOriginTimeoutSeconds: app.node.tryGetContext('app-config/cfDistributionOriginTimeoutSeconds'),
   rdsEventSubscriptionEmailAddress: app.node.tryGetContext('app-config/rdsEventSubscriptionEmailAddress')
 });
-
-cdk.Aspects.of(app).add(new AwsSolutionsChecks({ verbose: true }));
