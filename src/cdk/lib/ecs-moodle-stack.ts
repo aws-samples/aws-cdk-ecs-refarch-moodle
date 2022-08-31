@@ -14,7 +14,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cdk from 'aws-cdk-lib';
-import * as cdknag from 'cdk-nag';
+import { SSMParameterReader } from './ssm-parameter-reader';
 
 export interface EcsMoodleStackProps extends cdk.StackProps {
   albCertificateArn: string;
@@ -285,7 +285,12 @@ export class EcsMoodleStack extends cdk.Stack {
       }
     });
 
-    // cloudfront distribution
+    // CloudFront distribution
+    const cfWafWebAclArnReader = new SSMParameterReader(this, 'cf-waf-web-acl-arn-ssm-param-reader', {
+      parameterName: 'cf-waf-web-acl-arn',
+      region: 'us-east-1'
+    })
+
     const cf = new cloudfront.Distribution(this, 'moodle-ecs-dist', {
       defaultBehavior: {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -297,99 +302,9 @@ export class EcsMoodleStack extends cdk.Stack {
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER
       },
       domainNames: [props.cfDomain],
-      certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString())
+      certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString()),
+      webAclId: cfWafWebAclArnReader.getParameterValue()
     });
-
-    //#region CDK Nag rules surpressions
-    cdknag.NagSuppressions.addResourceSuppressions(trailBucket, [
-      {
-        id: 'AwsSolutions-S1',
-        reason: 'Access logs is out of scope from this technical content.'
-      }
-    ]);
-    cdknag.NagSuppressions.addResourceSuppressions(moodleDb, [
-      {
-        id: 'AwsSolutions-SMG4',
-        reason: 'Moodle does not support Secrets Manager integration.'
-      },
-      {
-        id: 'AwsSolutions-RDS10',
-        reason: 'Allow users to use cdk destroy without issues as per the blog intended.'
-      },
-      {
-        id: 'AwsSolutions-RDS11',
-        reason: 'Optional security through obfuscation.'
-      },
-      {
-        id: 'AwsSolutions-RDS15',
-        reason: 'Allow users to use cdk destroy without issues as per the blog intended.'
-      }
-    ], true);
-    cdknag.NagSuppressions.addResourceSuppressions(rdsEventSubscriptionTopic, [
-      {
-        id: 'AwsSolutions-SNS2',
-        reason: 'SNS topic configuration is out-of-scope from this technical content.'
-      },
-      {
-        id: 'AwsSolutions-SNS3',
-        reason: 'SNS topic configuration is out-of-scope from this technical content.'
-      }
-    ]);
-    cdknag.NagSuppressions.addResourceSuppressions(moodleRedis, [
-      {
-        id: 'AwsSolutions-AEC5',
-        reason: 'Optional security through obfuscation.'
-      },
-      {
-        id: 'AwsSolutions-AEC6',
-        reason: 'No way to use secrets manager to supply the AuthToken.'
-      },
-      {
-        id: 'AwsSolutions-AEC3',
-        reason: 'Moodle does not support Redis with in-transit encryption.'
-      }
-    ]);
-    cdknag.NagSuppressions.addResourceSuppressions(moodleTaskDefinition, [
-      {
-        id: 'AwsSolutions-ECS2',
-        reason: 'Secrets are injected properly.'
-      },
-      {
-        id: 'AwsSolutions-IAM5',
-        reason: 'Default IAM permissions from CDK abstraction.'
-      }
-    ], true);
-    cdknag.NagSuppressions.addResourceSuppressions(moodlePasswordSecret, [
-      {
-        id: 'AwsSolutions-SMG4',
-        reason: 'The password is for Moodle Admin credentials which will be resetted through Moodle GUI.'
-      }
-    ]);
-    cdknag.NagSuppressions.addResourceSuppressions(alb, [
-      {
-        id: 'AwsSolutions-ELB2',
-        reason: 'Setting the access logs on the ALB throws new error "Unsupported feature flag". Surpressing it for now.'
-      },
-      {
-        id: 'AwsSolutions-EC23',
-        reason: 'ALB is open for TCP 80 and TCP 443 for incoming HTTP and HTTPS.'
-      }
-    ], true);
-    cdknag.NagSuppressions.addResourceSuppressions(cf, [
-      {
-        id: 'AwsSolutions-CFR1',
-        reason: 'Geo restriction is not required.'
-      },
-      {
-        id: 'AwsSolutions-CFR2',
-        reason: 'WAF is out of scope from this technical content.'
-      },
-      {
-        id: 'AwsSolutions-CFR3',
-        reason: 'Access logs is out of scope from this technical content.'
-      }
-    ]);
-    //#endregion
 
     // Outputs
     new cdk.CfnOutput(this, 'APPLICATION-LOAD-BALANCER-DNS-NAME', {
