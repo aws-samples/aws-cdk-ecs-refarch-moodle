@@ -331,8 +331,8 @@ export class EcsMoodleStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'MOODLE-SERVICE-NAME', {
       value: moodleService.serviceName
     });
-    new cdk.CfnOutput(this, 'MOODLE-CLOUDFRONT-NAME', {
-      value: cloudfront.Distribution.name
+    new cdk.CfnOutput(this, 'MOODLE-CLOUDFRONT-DIST-ID', {
+      value: cf.distributionId
     });
   }
 }
