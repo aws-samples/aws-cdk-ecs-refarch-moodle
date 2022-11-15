@@ -18,6 +18,8 @@
     "app-config/serviceReplicaDesiredCount": 1,
     "app-config/serviceHealthCheckGracePeriodSeconds": 1800,
     "app-config/cfDistributionOriginTimeoutSeconds": 60,
-    "app-config/rdsEventSubscriptionEmailAddress": "user@example.com"
+    "app-config/rdsEventSubscriptionEmailAddress": "user@example.com",
+    "app-config/rdsInstanceType": "r6g.large",
+    "app-config/elastiCacheRedisInstanceType": "cache.r6g.large"
   }
 }
