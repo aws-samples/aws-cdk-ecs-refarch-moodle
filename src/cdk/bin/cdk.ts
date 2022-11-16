@@ -19,5 +19,7 @@ new EcsMoodleStack(app, 'ecs-moodle-stack', {
   serviceReplicaDesiredCount: app.node.tryGetContext('app-config/serviceReplicaDesiredCount'),
   serviceHealthCheckGracePeriodSeconds: app.node.tryGetContext('app-config/serviceHealthCheckGracePeriodSeconds'),
   cfDistributionOriginTimeoutSeconds: app.node.tryGetContext('app-config/cfDistributionOriginTimeoutSeconds'),
-  rdsEventSubscriptionEmailAddress: app.node.tryGetContext('app-config/rdsEventSubscriptionEmailAddress')
+  rdsEventSubscriptionEmailAddress: app.node.tryGetContext('app-config/rdsEventSubscriptionEmailAddress'),
+  rdsInstanceType: app.node.tryGetContext('app-config/rdsInstanceType'),
+  elastiCacheRedisInstanceType: app.node.tryGetContext('app-config/elastiCacheRedisInstanceType')
 });

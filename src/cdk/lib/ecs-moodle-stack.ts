@@ -25,16 +25,14 @@ export interface EcsMoodleStackProps extends cdk.StackProps {
   serviceHealthCheckGracePeriodSeconds: number;
   cfDistributionOriginTimeoutSeconds: number;
   rdsEventSubscriptionEmailAddress: string;
+  rdsInstanceType: string;
+  elastiCacheRedisInstanceType: string;
 }
 
 export class EcsMoodleStack extends cdk.Stack {
   // Local Variables
   private readonly MoodleDatabaseName = 'moodledb';
   private readonly MoodleDatabaseUsername = 'dbadmin';
-
-  // Configurable Variables
-  private readonly RdsInstanceType = 'r5.large';
-  private readonly ElasticacheRedisInstanceType = 'cache.r6g.large';
   
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
@@ -77,12 +75,12 @@ export class EcsMoodleStack extends cdk.Stack {
 
     // RDS
     const moodleDb = new rds.DatabaseInstance(this, 'moodle-db', {
-      engine: rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_5_7_34}),
+      engine: rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_0_30}),
       vpc: vpc,
       vpcSubnets: { 
-        subnetType: ec2.SubnetType.PRIVATE_WITH_NAT
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
       },
-      instanceType: new ec2.InstanceType(this.RdsInstanceType),
+      instanceType: new ec2.InstanceType(props.rdsInstanceType),
       allocatedStorage: 30,
       maxAllocatedStorage: 300,
       storageType: rds.StorageType.GP2,
@@ -123,20 +121,20 @@ export class EcsMoodleStack extends cdk.Stack {
     });
 
     const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'redis-subnet-group', {
-      cacheSubnetGroupName: 'moodle-redis-private-subnet-group',
+      cacheSubnetGroupName: `${cdk.Names.uniqueId(this)}-redis-subnet-group`,
       description: 'Moodle Redis Subnet Group',
-      subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_NAT }).subnetIds
+      subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds
     });
 
     const moodleRedis = new elasticache.CfnReplicationGroup(this, 'moodle-redis', {
       replicationGroupDescription: 'Moodle Redis',
-      cacheNodeType: this.ElasticacheRedisInstanceType,
+      cacheNodeType: props.elastiCacheRedisInstanceType,
       engine: 'redis',
       numCacheClusters: 2,
       multiAzEnabled: true,
       automaticFailoverEnabled: true,
       autoMinorVersionUpgrade: true,
-      cacheSubnetGroupName: 'moodle-redis-private-subnet-group',
+      cacheSubnetGroupName: `${cdk.Names.uniqueId(this)}-redis-subnet-group`,
       securityGroupIds: [ redisSG.securityGroupId ],
       atRestEncryptionEnabled: true
     });
@@ -171,19 +169,6 @@ export class EcsMoodleStack extends cdk.Stack {
         }
       }
     });
-
-    // Workaround for the issue: https://github.com/aws/aws-cdk/issues/15025
-    // Add the correct case
-    (moodleTaskDefinition.node.defaultChild as ecs.CfnTaskDefinition).addPropertyOverride(`Volumes.0.EFSVolumeConfiguration`, {
-        FilesystemId: moodleEfs.fileSystemId,
-        transitEncryption: "ENABLED",
-        authorizationConfig: {
-          accessPointId: moodleEfsAccessPoint.accessPointId
-        }
-    });
-    // Delete the wrong case
-    (moodleTaskDefinition.node.defaultChild as ecs.CfnTaskDefinition).addPropertyDeletionOverride(`Volumes.0.EfsVolumeConfiguration`);
-    // End workaround for the issue: https://github.com/aws/aws-cdk/issues/15025
 
     // Moodle container definition
     const moodlePasswordSecret = new secretsmanager.Secret(this, 'moodle-password-secret');
@@ -233,7 +218,7 @@ export class EcsMoodleStack extends cdk.Stack {
           weight: 1
         }
       ],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_NAT },
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       enableECSManagedTags: true,
       maxHealthyPercent: 200,
       minHealthyPercent: 50,
@@ -331,8 +316,8 @@ export class EcsMoodleStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'MOODLE-SERVICE-NAME', {
       value: moodleService.serviceName
     });
-    new cdk.CfnOutput(this, 'MOODLE-CLOUDFRONT-NAME', {
-      value: cloudfront.Distribution.name
+    new cdk.CfnOutput(this, 'MOODLE-CLOUDFRONT-DIST-ID', {
+      value: cf.distributionId
     });
   }
 }
