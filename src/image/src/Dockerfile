@@ -15,3 +15,6 @@ RUN apt-get install -y autoconf wget build-essential && \
     cd .. && \
     rm redis-5.3.7.tgz && \
     rm -rf redis-5.3.7
+
+# Copy the updated libmoodle.sh
+COPY ./libmoodle.sh /opt/bitnami/scripts/libmoodle.sh
