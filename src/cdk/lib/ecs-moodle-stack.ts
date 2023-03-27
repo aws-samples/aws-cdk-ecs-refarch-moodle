@@ -75,7 +75,7 @@ export class EcsMoodleStack extends cdk.Stack {
 
     // RDS
     const moodleDb = new rds.DatabaseInstance(this, 'moodle-db', {
-      engine: rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_0_30}),
+      engine: rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_0_32}),
       vpc: vpc,
       vpcSubnets: { 
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
