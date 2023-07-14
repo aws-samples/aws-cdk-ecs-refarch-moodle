@@ -107,7 +107,7 @@ export class EcsMoodleStack extends cdk.Stack {
       lifecyclePolicy: efs.LifecyclePolicy.AFTER_30_DAYS,
       outOfInfrequentAccessPolicy: efs.OutOfInfrequentAccessPolicy.AFTER_1_ACCESS,
       performanceMode: efs.PerformanceMode.GENERAL_PURPOSE,
-      throughputMode: efs.ThroughputMode.BURSTING,
+      throughputMode: efs.ThroughputMode.ELASTIC,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       enableAutomaticBackups: true
     });
@@ -138,7 +138,7 @@ export class EcsMoodleStack extends cdk.Stack {
       securityGroupIds: [ redisSG.securityGroupId ],
       atRestEncryptionEnabled: true
     });
-    moodleRedis.addDependsOn(redisSubnetGroup);
+    moodleRedis.addDependency(redisSubnetGroup);
 
     // Moodle ECS Task Definition
     const moodleTaskDefinition = new ecs.FargateTaskDefinition(this, 'moodle-task-def', {

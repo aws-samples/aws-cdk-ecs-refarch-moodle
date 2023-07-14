@@ -5,13 +5,13 @@ import { CloudFrontWAFWebAclStack } from '../lib/cloudfront-waf-web-acl-stack';
 
 const app = new cdk.App();
 
-new CloudFrontWAFWebAclStack(app, 'cloudfront-waf-web-acl-stack', {
+const cloudFrontWAFWebAclStack = new CloudFrontWAFWebAclStack(app, 'cloudfront-waf-web-acl-stack', {
   env: {
     region: 'us-east-1'
   }
 });
 
-new EcsMoodleStack(app, 'ecs-moodle-stack', {
+const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   albCertificateArn: app.node.tryGetContext('app-config/albCertificateArn'),
   cfCertificateArn: app.node.tryGetContext('app-config/cfCertificateArn'),
   cfDomain: app.node.tryGetContext('app-config/cfDomain'),
@@ -23,3 +23,4 @@ new EcsMoodleStack(app, 'ecs-moodle-stack', {
   rdsInstanceType: app.node.tryGetContext('app-config/rdsInstanceType'),
   elastiCacheRedisInstanceType: app.node.tryGetContext('app-config/elastiCacheRedisInstanceType')
 });
+ecsMoodleStack.addDependency(cloudFrontWAFWebAclStack);
