@@ -69,13 +69,13 @@ export class EcsMoodleStack extends cdk.Stack {
     const cluster = new ecs.Cluster(this, 'ecs-cluster', {
       vpc: vpc,
       clusterName: 'moodle-ecs-cluster',
-      containerInsights: true,
+      containerInsightsV2: ecs.ContainerInsights.ENABLED,
       enableFargateCapacityProviders: true
     });
 
     // RDS
     const moodleDb = new rds.DatabaseInstance(this, 'moodle-db', {
-      engine: rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_0_32}),
+      engine: rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_4_4}),
       vpc: vpc,
       vpcSubnets: { 
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
@@ -225,7 +225,8 @@ export class EcsMoodleStack extends cdk.Stack {
       healthCheckGracePeriod: cdk.Duration.seconds(props.serviceHealthCheckGracePeriodSeconds),
       circuitBreaker: { rollback: true }
     });
-
+    moodleService.node.addDependency(cluster);
+    
     // Moodle ECS Service Task Auto Scaling
     const moodleServiceScaling = moodleService.autoScaleTaskCount({ minCapacity: props.serviceReplicaDesiredCount, maxCapacity: 10 } );
     moodleServiceScaling.scaleOnCpuUtilization('cpu-scaling', {
