@@ -88,7 +88,7 @@ export class EcsMoodleStack extends cdk.Stack {
       multiAz: true,
       databaseName: this.MoodleDatabaseName,
       credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, { excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\' }), // Punctuations are causing issue with Moodle connecting to the database
-      enablePerformanceInsights: true,
+      databaseInsightsMode: rds.DatabaseInsightsMode.STANDARD,
       backupRetention: cdk.Duration.days(7),
       storageEncrypted: true
     });
