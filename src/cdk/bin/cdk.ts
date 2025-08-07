@@ -21,6 +21,8 @@ const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   cfDistributionOriginTimeoutSeconds: app.node.tryGetContext('app-config/cfDistributionOriginTimeoutSeconds'),
   rdsEventSubscriptionEmailAddress: app.node.tryGetContext('app-config/rdsEventSubscriptionEmailAddress'),
   rdsInstanceType: app.node.tryGetContext('app-config/rdsInstanceType'),
+  rdsEngine: app.node.tryGetContext('app-config/rdsEngine'),
+  rdsEngineVersion: app.node.tryGetContext('app-config/rdsEngineVersion'),
   elastiCacheRedisInstanceType: app.node.tryGetContext('app-config/elastiCacheRedisInstanceType')
 });
 ecsMoodleStack.addDependency(cloudFrontWAFWebAclStack);
