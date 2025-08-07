@@ -34,6 +34,11 @@ export class EcsMoodleStack extends cdk.Stack {
   private readonly MoodleDatabaseName = 'moodledb';
   private readonly MoodleDatabaseUsername = 'dbadmin';
   
+  private supportsDatabaseInsights(instanceType: string): boolean {
+      const unsupportedTypes = ['t2.micro', 't2.small', 't3.micro', 't3.small', 't4g.micro', 't4g.small'];
+      return !unsupportedTypes.includes(instanceType);
+    }
+
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
 
@@ -83,12 +88,17 @@ export class EcsMoodleStack extends cdk.Stack {
       instanceType: new ec2.InstanceType(props.rdsInstanceType),
       allocatedStorage: 30,
       maxAllocatedStorage: 300,
-      storageType: rds.StorageType.GP2,
+      storageType: rds.StorageType.GP3,
       autoMinorVersionUpgrade: true,
       multiAz: true,
       databaseName: this.MoodleDatabaseName,
-      credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, { excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\' }), // Punctuations are causing issue with Moodle connecting to the database
-      databaseInsightsMode: rds.DatabaseInsightsMode.STANDARD,
+      credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, { 
+        excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\' 
+      }), // Punctuations are causing issue with Moodle connecting to the database
+      ...(this.supportsDatabaseInsights(props.rdsInstanceType) && {
+          databaseInsightsMode: rds.DatabaseInsightsMode.ADVANCED,
+          performanceInsightRetention: rds.PerformanceInsightRetention.MONTHS_15
+      }),
       backupRetention: cdk.Duration.days(7),
       storageEncrypted: true
     });
