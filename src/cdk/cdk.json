@@ -19,7 +19,9 @@
     "app-config/serviceHealthCheckGracePeriodSeconds": 1800,
     "app-config/cfDistributionOriginTimeoutSeconds": 60,
     "app-config/rdsEventSubscriptionEmailAddress": "user@example.com",
-    "app-config/rdsInstanceType": "r6g.large",
-    "app-config/elastiCacheRedisInstanceType": "cache.r6g.large"
+    "app-config/rdsInstanceType": "r7g.large",
+    "app-config/rdsEngine": "mariadb",
+    "app-config/rdsEngineVersion": "11.4.7",
+    "app-config/elastiCacheRedisInstanceType": "cache.t7g.large"
   }
 }

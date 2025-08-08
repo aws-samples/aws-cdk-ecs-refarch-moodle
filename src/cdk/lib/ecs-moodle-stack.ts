@@ -26,6 +26,8 @@ export interface EcsMoodleStackProps extends cdk.StackProps {
   cfDistributionOriginTimeoutSeconds: number;
   rdsEventSubscriptionEmailAddress: string;
   rdsInstanceType: string;
+  rdsEngine: string;
+  rdsEngineVersion: string;
   elastiCacheRedisInstanceType: string;
 }
 
@@ -34,8 +36,44 @@ export class EcsMoodleStack extends cdk.Stack {
   private readonly MoodleDatabaseName = 'moodledb';
   private readonly MoodleDatabaseUsername = 'dbadmin';
   
+  private supportsDatabaseInsights(instanceType: string): boolean {
+      const unsupportedTypes = ['t2.micro', 't2.small', 't3.micro', 't3.small', 't4g.micro', 't4g.small'];
+      return !unsupportedTypes.includes(instanceType);
+    }
+
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
+
+    // Default rdsEngine to mysql if not set
+    const rdsEngine = props.rdsEngine || 'mysql';
+    
+    // Get latest available version for the engine
+    const getLatestVersion = (engine: string) => {
+      if (engine === 'mysql') {
+        const versions = Object.values(rds.MysqlEngineVersion).map(v => v.mysqlFullVersion);
+        return versions[versions.length - 1];
+      } else {
+        const versions = Object.values(rds.MariaDbEngineVersion).map(v => v.mariaDbFullVersion);
+        return versions[versions.length - 1];
+      }
+    };
+
+    // Default rdsEngineVersion to latest if both rdsEngine and rdsEngineVersion are not defined
+    const rdsEngineVersion = (!props.rdsEngine && !props.rdsEngineVersion) ? getLatestVersion(rdsEngine) : props.rdsEngineVersion;
+
+    if (!['mariadb', 'mysql'].includes(rdsEngine)) {
+      throw new Error('rdsEngine must be either "mariadb" or "mysql"');
+    }
+
+    // Validate engine version
+    const validVersions: Record<string, string[]>  = {
+      mysql: Object.values(rds.MysqlEngineVersion).map(v => v.mysqlFullVersion),
+      mariadb: Object.values(rds.MariaDbEngineVersion).map(v => v.mariaDbFullVersion)
+    };
+
+    if (!validVersions[rdsEngine].includes(rdsEngineVersion)) {
+      throw new Error(`Invalid rdsEngineVersion "${rdsEngineVersion}" for engine "${rdsEngine}"`);
+    }
 
     // CloudTrail
     const trailBucket = new s3.Bucket(this, 'cloudtrail-bucket', {
@@ -73,9 +111,20 @@ export class EcsMoodleStack extends cdk.Stack {
       enableFargateCapacityProviders: true
     });
 
+    // RDS - Dynamic engine configuration
+    const getEngineConfig = () => {
+      if (rdsEngine === 'mysql') {
+        const version = Object.values(rds.MysqlEngineVersion).find(v => v.mysqlFullVersion === rdsEngineVersion);
+        return rds.DatabaseInstanceEngine.mysql({ version: version! });
+      } else {
+        const version = Object.values(rds.MariaDbEngineVersion).find(v => v.mariaDbFullVersion === rdsEngineVersion);
+        return rds.DatabaseInstanceEngine.mariaDb({ version: version! });
+      }
+    };
+
     // RDS
     const moodleDb = new rds.DatabaseInstance(this, 'moodle-db', {
-      engine: rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_4_4}),
+      engine: getEngineConfig(),
       vpc: vpc,
       vpcSubnets: { 
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
@@ -83,12 +132,17 @@ export class EcsMoodleStack extends cdk.Stack {
       instanceType: new ec2.InstanceType(props.rdsInstanceType),
       allocatedStorage: 30,
       maxAllocatedStorage: 300,
-      storageType: rds.StorageType.GP2,
+      storageType: rds.StorageType.GP3,
       autoMinorVersionUpgrade: true,
       multiAz: true,
       databaseName: this.MoodleDatabaseName,
-      credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, { excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\' }), // Punctuations are causing issue with Moodle connecting to the database
-      enablePerformanceInsights: true,
+      credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, { 
+        excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\' 
+      }), // Punctuations are causing issue with Moodle connecting to the database
+      ...(this.supportsDatabaseInsights(props.rdsInstanceType) && {
+          databaseInsightsMode: rds.DatabaseInsightsMode.ADVANCED,
+          performanceInsightRetention: rds.PerformanceInsightRetention.MONTHS_15
+      }),
       backupRetention: cdk.Duration.days(7),
       storageEncrypted: true
     });
@@ -179,7 +233,7 @@ export class EcsMoodleStack extends cdk.Stack {
       portMappings: [{ containerPort: 8080 }],
       stopTimeout: cdk.Duration.seconds(120),
       environment: {
-        'MOODLE_DATABASE_TYPE': 'mysqli',
+        'MOODLE_DATABASE_TYPE': rdsEngine === 'mysql' ? 'mysqli' : 'mariadb',
         'MOODLE_DATABASE_HOST': moodleDb.dbInstanceEndpointAddress,
         'MOODLE_DATABASE_PORT_NUMBER': moodleDb.dbInstanceEndpointPort,
         'MOODLE_DATABASE_NAME': this.MoodleDatabaseName,
