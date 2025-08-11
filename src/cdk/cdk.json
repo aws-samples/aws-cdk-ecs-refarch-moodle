@@ -1,5 +1,9 @@
 {
   "app": "npx ts-node --prefer-ts-exts bin/cdk.ts",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["README.md", "cdk*.json", "**/*.d.ts", "**/*.js", "tsconfig.json", "package*.json", "yarn.lock", "node_modules", "test"]
+  },
   "context": {
     "@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId": true,
     "aws-cdk:enableDiffNoFail": "true",
@@ -22,6 +26,11 @@
     "app-config/rdsInstanceType": "r7g.large",
     "app-config/rdsEngine": "mariadb",
     "app-config/rdsEngineVersion": "11.4.7",
-    "app-config/elastiCacheRedisInstanceType": "cache.t7g.large"
+    "app-config/cacheEngine": "redis",
+    "app-config/cacheDeploymentMode": "provisioned",
+    "app-config/cacheServerlessMaxStorageGB": 10,
+    "app-config/cacheServerlessMaxCapacity": 100,
+    "app-config/cacheServerlessMinCapacity": 1,
+    "app-config/cacheProvisionedInstanceType": "cache.r7g.large"
   }
 }

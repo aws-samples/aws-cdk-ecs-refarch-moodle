@@ -23,6 +23,11 @@ const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   rdsInstanceType: app.node.tryGetContext('app-config/rdsInstanceType'),
   rdsEngine: app.node.tryGetContext('app-config/rdsEngine'),
   rdsEngineVersion: app.node.tryGetContext('app-config/rdsEngineVersion'),
-  elastiCacheRedisInstanceType: app.node.tryGetContext('app-config/elastiCacheRedisInstanceType')
+  cacheEngine: app.node.tryGetContext('app-config/cacheEngine'),
+  cacheDeploymentMode: app.node.tryGetContext('app-config/cacheDeploymentMode'),
+  cacheServerlessMaxStorageGB: app.node.tryGetContext('app-config/cacheServerlessMaxStorageGB'),
+  cacheServerlessMaxCapacity: app.node.tryGetContext('app-config/cacheServerlessMaxCapacity'),
+  cacheServerlessMinCapacity: app.node.tryGetContext('app-config/cacheServerlessMinCapacity'),
+  cacheProvisionedInstanceType: app.node.tryGetContext('app-config/cacheProvisionedInstanceType')
 });
 ecsMoodleStack.addDependency(cloudFrontWAFWebAclStack);

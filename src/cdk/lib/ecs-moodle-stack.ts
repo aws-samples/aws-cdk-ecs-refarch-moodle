@@ -28,7 +28,12 @@ export interface EcsMoodleStackProps extends cdk.StackProps {
   rdsInstanceType: string;
   rdsEngine: string;
   rdsEngineVersion: string;
-  elastiCacheRedisInstanceType: string;
+  cacheEngine: 'redis' | 'valkey';
+  cacheDeploymentMode: 'provisioned' | 'serverless';
+  cacheServerlessMaxStorageGB: number;
+  cacheServerlessMaxCapacity: number; 
+  cacheServerlessMinCapacity: number; 
+  cacheProvisionedInstanceType: string;
 }
 
 export class EcsMoodleStack extends cdk.Stack {
@@ -74,6 +79,21 @@ export class EcsMoodleStack extends cdk.Stack {
     if (!validVersions[rdsEngine].includes(rdsEngineVersion)) {
       throw new Error(`Invalid rdsEngineVersion "${rdsEngineVersion}" for engine "${rdsEngine}"`);
     }
+
+    // Validate cache engine
+    if (!['redis', 'valkey'].includes(props.cacheEngine)) {
+      throw new Error('cacheEngine must be either "redis" or "valkey"');
+    }
+
+    // Validate cache deployment mode
+    if (!['provisioned', 'serverless'].includes(props.cacheDeploymentMode)) {
+      throw new Error('cacheDeploymentMode must be either "provisioned" or "serverless"');
+    }
+
+    // Set defaults if not provided
+    const cacheServerlessMaxStorageGB = props.cacheServerlessMaxStorageGB || 100;
+    const cacheServerlessMaxCapacity = props.cacheServerlessMaxCapacity || 100;
+    const cacheServerlessMinCapacity = props.cacheServerlessMinCapacity || 1;
 
     // CloudTrail
     const trailBucket = new s3.Bucket(this, 'cloudtrail-bucket', {
@@ -169,30 +189,55 @@ export class EcsMoodleStack extends cdk.Stack {
       path: '/'
     });
 
-    // ElastiCache Redis
-    const redisSG = new ec2.SecurityGroup(this, 'moodle-redis-sg', {
+    // ElastiCache - Redis or Valkey
+    const cacheSG = new ec2.SecurityGroup(this, 'moodle-cache-sg', {
       vpc: vpc
     });
 
-    const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'redis-subnet-group', {
-      cacheSubnetGroupName: `${cdk.Names.uniqueId(this)}-redis-subnet-group`,
-      description: 'Moodle Redis Subnet Group',
+    const cacheSubnetGroup = new elasticache.CfnSubnetGroup(this, 'cache-subnet-group', {
+      cacheSubnetGroupName: `${cdk.Names.uniqueId(this)}-cache-subnet-group`,
+      description: `Moodle ${props.cacheEngine.toUpperCase()} Subnet Group`,
       subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds
     });
 
-    const moodleRedis = new elasticache.CfnReplicationGroup(this, 'moodle-redis', {
-      replicationGroupDescription: 'Moodle Redis',
-      cacheNodeType: props.elastiCacheRedisInstanceType,
-      engine: 'redis',
-      numCacheClusters: 2,
-      multiAzEnabled: true,
-      automaticFailoverEnabled: true,
-      autoMinorVersionUpgrade: true,
-      cacheSubnetGroupName: `${cdk.Names.uniqueId(this)}-redis-subnet-group`,
-      securityGroupIds: [ redisSG.securityGroupId ],
-      atRestEncryptionEnabled: true
-    });
-    moodleRedis.addDependency(redisSubnetGroup);
+    let cacheEndpoint: string;
+
+    if (props.cacheDeploymentMode === 'serverless') {
+      const moodleServerlessCache = new elasticache.CfnServerlessCache(this, `moodle-${props.cacheEngine}-serverless-cache`, {
+        serverlessCacheName: `moodle-${props.cacheEngine}-serverless`,
+        engine: props.cacheEngine,
+        majorEngineVersion: props.cacheEngine === 'redis' ? '7' : '8',
+        cacheUsageLimits: {
+          dataStorage: {
+            maximum: cacheServerlessMaxStorageGB,
+            unit: 'GB'
+          },
+          ecpuPerSecond: {
+            maximum: (cacheServerlessMaxCapacity) * 1000,
+            minimum: (cacheServerlessMinCapacity) * 1000
+          }
+        },
+        subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds,
+        securityGroupIds: [cacheSG.securityGroupId]
+      });
+      cacheEndpoint = `${moodleServerlessCache.attrEndpointAddress}:${moodleServerlessCache.attrEndpointPort}`;
+    } else {
+      const moodleProvisionedCache = new elasticache.CfnReplicationGroup(this, `moodle-${props.cacheEngine}-provisioned-cache`, {
+        replicationGroupDescription: `Moodle ${props.cacheEngine.toUpperCase()}`,
+        cacheNodeType: props.cacheProvisionedInstanceType,
+        engine: props.cacheEngine,
+        numCacheClusters: 2,
+        multiAzEnabled: true,
+        automaticFailoverEnabled: true,
+        autoMinorVersionUpgrade: true,
+        cacheSubnetGroupName: `${cdk.Names.uniqueId(this)}-cache-subnet-group`,
+        securityGroupIds: [cacheSG.securityGroupId],
+        transitEncryptionEnabled: true,
+        atRestEncryptionEnabled: true
+      });
+      moodleProvisionedCache.addDependency(cacheSubnetGroup);
+      cacheEndpoint = `${moodleProvisionedCache.attrPrimaryEndPointAddress}:${moodleProvisionedCache.attrPrimaryEndPointPort}`;
+    }
 
     // Moodle ECS Task Definition
     const moodleTaskDefinition = new ecs.FargateTaskDefinition(this, 'moodle-task-def', {
@@ -262,6 +307,7 @@ export class EcsMoodleStack extends cdk.Stack {
       cluster: cluster,
       taskDefinition: moodleTaskDefinition,
       desiredCount: props.serviceReplicaDesiredCount,
+      enableExecuteCommand: true,
       capacityProviderStrategies: [ // Every 1 task which uses FARGATE, 3 tasks will use FARGATE_SPOT (25% / 75%)
         {
           capacityProvider: 'FARGATE_SPOT',
@@ -281,6 +327,18 @@ export class EcsMoodleStack extends cdk.Stack {
     });
     moodleService.node.addDependency(cluster);
     
+    // Add after task definition creation
+    moodleTaskDefinition.addToTaskRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'ssmmessages:CreateControlChannel',
+        'ssmmessages:CreateDataChannel',
+        'ssmmessages:OpenControlChannel',
+        'ssmmessages:OpenDataChannel'
+      ],
+      resources: ['*']
+    }));
+
     // Moodle ECS Service Task Auto Scaling
     const moodleServiceScaling = moodleService.autoScaleTaskCount({ minCapacity: props.serviceReplicaDesiredCount, maxCapacity: 10 } );
     moodleServiceScaling.scaleOnCpuUtilization('cpu-scaling', {
@@ -290,7 +348,7 @@ export class EcsMoodleStack extends cdk.Stack {
     // Allow access using Security Groups
     moodleDb.connections.allowDefaultPortFrom(moodleService, 'From Moodle ECS Service');
     moodleEfs.connections.allowDefaultPortFrom(moodleService, 'From Moodle ECS Service');
-    redisSG.connections.allowFrom(moodleService, ec2.Port.tcp(6379), 'From Moodle ECS Service');
+    cacheSG.connections.allowFrom(moodleService, ec2.Port.tcp(6379), 'From Moodle ECS Service');
 
     // Moodle Load Balancer
     const alb = new elbv2.ApplicationLoadBalancer(this, 'moodle-alb', {
@@ -359,8 +417,8 @@ export class EcsMoodleStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'MOODLE-PASSWORD-SECRET-ARN', {
       value: moodlePasswordSecret.secretArn
     });
-    new cdk.CfnOutput(this, 'MOODLE-REDIS-PRIMARY-ENDPOINT-ADDRESS-AND-PORT', {
-      value: `${moodleRedis.attrPrimaryEndPointAddress}:${moodleRedis.attrPrimaryEndPointPort}`
+    new cdk.CfnOutput(this, 'MOODLE-CACHE-ENDPOINT-ADDRESS-AND-PORT', {
+      value: cacheEndpoint
     });
     new cdk.CfnOutput(this, 'ECS-CLUSTER-NAME', {
       value: cluster.clusterName
