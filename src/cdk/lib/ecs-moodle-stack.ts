@@ -25,9 +25,11 @@ export interface EcsMoodleStackProps extends cdk.StackProps {
   serviceHealthCheckGracePeriodSeconds: number;
   cfDistributionOriginTimeoutSeconds: number;
   rdsEventSubscriptionEmailAddress: string;
-  rdsInstanceType: string;
   rdsEngine: string;
   rdsEngineVersion: string;
+  rdsInstanceType: string;
+  auroraServerlessMinCapacity?: number;
+  auroraServerlessMaxCapacity?: number;
   cacheEngine: 'redis' | 'valkey';
   cacheDeploymentMode: 'provisioned' | 'serverless';
   cacheServerlessMaxStorageGB: number;
@@ -40,11 +42,11 @@ export class EcsMoodleStack extends cdk.Stack {
   // Local Variables
   private readonly MoodleDatabaseName = 'moodledb';
   private readonly MoodleDatabaseUsername = 'dbadmin';
-  
+
   private supportsDatabaseInsights(instanceType: string): boolean {
-      const unsupportedTypes = ['t2.micro', 't2.small', 't3.micro', 't3.small', 't4g.micro', 't4g.small'];
-      return !unsupportedTypes.includes(instanceType);
-    }
+    const unsupportedTypes = ['t2.micro', 't2.small', 't3.micro', 't3.small', 't4g.micro', 't4g.small'];
+    return !unsupportedTypes.includes(instanceType);
+  }
 
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
@@ -52,6 +54,10 @@ export class EcsMoodleStack extends cdk.Stack {
     // Default rdsEngine to mysql if not set
     const rdsEngine = props.rdsEngine || 'mysql';
     
+    // Get Aurora Serverless capacity from props with defaults
+    const serverlessMinCapacity = props.auroraServerlessMinCapacity ?? 0.5;
+    const serverlessMaxCapacity = props.auroraServerlessMaxCapacity ?? 100;
+
     // Get latest available version for the engine
     const getLatestVersion = (engine: string) => {
       if (engine === 'mysql') {
@@ -66,18 +72,20 @@ export class EcsMoodleStack extends cdk.Stack {
     // Default rdsEngineVersion to latest if both rdsEngine and rdsEngineVersion are not defined
     const rdsEngineVersion = (!props.rdsEngine && !props.rdsEngineVersion) ? getLatestVersion(rdsEngine) : props.rdsEngineVersion;
 
-    if (!['mariadb', 'mysql'].includes(rdsEngine)) {
-      throw new Error('rdsEngine must be either "mariadb" or "mysql"');
+    if (!['mariadb', 'mysql', 'aurora', 'aurora-serverless'].includes(rdsEngine)) {
+      throw new Error('rdsEngine must be either "mariadb", "mysql", "aurora", or "aurora-serverless"');
     }
 
     // Validate engine version
-    const validVersions: Record<string, string[]>  = {
+    const validVersions: Record<string, string[]> = {
       mysql: Object.values(rds.MysqlEngineVersion).map(v => v.mysqlFullVersion),
-      mariadb: Object.values(rds.MariaDbEngineVersion).map(v => v.mariaDbFullVersion)
+      mariadb: Object.values(rds.MariaDbEngineVersion).map(v => v.mariaDbFullVersion),
+      aurora: Object.values(rds.AuroraMysqlEngineVersion).map(v => v.auroraMysqlFullVersion),
+      'aurora-serverless': Object.values(rds.AuroraMysqlEngineVersion).map(v => v.auroraMysqlFullVersion)
     };
 
     if (!validVersions[rdsEngine].includes(rdsEngineVersion)) {
-      throw new Error(`Invalid rdsEngineVersion "${rdsEngineVersion}" for engine "${rdsEngine}"`);
+      throw new Error(`Invalid rdsEngineVersion "${rdsEngineVersion}" for engine "${rdsEngine}". Valid versions: ${validVersions[rdsEngine].join(', ')}`);
     }
 
     // Validate cache engine
@@ -136,43 +144,91 @@ export class EcsMoodleStack extends cdk.Stack {
       if (rdsEngine === 'mysql') {
         const version = Object.values(rds.MysqlEngineVersion).find(v => v.mysqlFullVersion === rdsEngineVersion);
         return rds.DatabaseInstanceEngine.mysql({ version: version! });
+      } else if (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') {
+        const version = Object.values(rds.AuroraMysqlEngineVersion).find(v => v.auroraMysqlFullVersion === rdsEngineVersion);
+        return rds.DatabaseClusterEngine.auroraMysql({ version: version! });
       } else {
         const version = Object.values(rds.MariaDbEngineVersion).find(v => v.mariaDbFullVersion === rdsEngineVersion);
         return rds.DatabaseInstanceEngine.mariaDb({ version: version! });
       }
     };
 
-    // RDS
-    const moodleDb = new rds.DatabaseInstance(this, 'moodle-db', {
-      engine: getEngineConfig(),
-      vpc: vpc,
-      vpcSubnets: { 
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
-      },
-      instanceType: new ec2.InstanceType(props.rdsInstanceType),
-      allocatedStorage: 30,
-      maxAllocatedStorage: 300,
-      storageType: rds.StorageType.GP3,
-      autoMinorVersionUpgrade: true,
-      multiAz: true,
-      databaseName: this.MoodleDatabaseName,
-      credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, { 
-        excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\' 
-      }), // Punctuations are causing issue with Moodle connecting to the database
-      ...(this.supportsDatabaseInsights(props.rdsInstanceType) && {
+    // Database - RDS Instance or Aurora Cluster
+    let moodleDb: rds.DatabaseInstance | rds.DatabaseCluster;
+
+    if (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') {
+      if (rdsEngine === 'aurora-serverless') {
+        const serverlessInstance = rds.ClusterInstance.serverlessV2('serverless');
+
+        moodleDb = new rds.DatabaseCluster(this, 'moodle-aurora-cluster', {
+          engine: getEngineConfig() as rds.IClusterEngine,
+          vpc: vpc,
+          vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+          writer: serverlessInstance,
+          serverlessV2MinCapacity: serverlessMinCapacity,
+          serverlessV2MaxCapacity: serverlessMaxCapacity,
+          defaultDatabaseName: this.MoodleDatabaseName,
+          credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, {
+            excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\'
+          }),
+          databaseInsightsMode: rds.DatabaseInsightsMode.ADVANCED,
+          performanceInsightRetention: rds.PerformanceInsightRetention.MONTHS_15,
+          backup: { retention: cdk.Duration.days(7) },
+          storageEncrypted: true
+        });
+      } else {
+        const writerInstance = rds.ClusterInstance.provisioned('writer', {
+          instanceType: new ec2.InstanceType(props.rdsInstanceType)
+        });
+
+        moodleDb = new rds.DatabaseCluster(this, 'moodle-aurora-cluster', {
+          engine: getEngineConfig() as rds.IClusterEngine,
+          vpc: vpc,
+          vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+          writer: writerInstance,
+          defaultDatabaseName: this.MoodleDatabaseName,
+          credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, {
+            excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\'
+          }),
+          databaseInsightsMode: rds.DatabaseInsightsMode.ADVANCED,
+          performanceInsightRetention: rds.PerformanceInsightRetention.MONTHS_15,
+          backup: { retention: cdk.Duration.days(7) },
+          storageEncrypted: true
+        });
+
+        // Store instance references for later dependency management
+        (moodleDb as any).writerInstance = writerInstance;
+      }
+    } else {
+      moodleDb = new rds.DatabaseInstance(this, 'moodle-db', {
+        engine: getEngineConfig() as rds.IInstanceEngine,
+        vpc: vpc,
+        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        instanceType: new ec2.InstanceType(props.rdsInstanceType),
+        allocatedStorage: 30,
+        maxAllocatedStorage: 300,
+        storageType: rds.StorageType.GP3,
+        autoMinorVersionUpgrade: true,
+        multiAz: true,
+        databaseName: this.MoodleDatabaseName,
+        credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, {
+          excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\'
+        }),
+        ...(this.supportsDatabaseInsights(props.rdsInstanceType) && {
           databaseInsightsMode: rds.DatabaseInsightsMode.ADVANCED,
           performanceInsightRetention: rds.PerformanceInsightRetention.MONTHS_15
-      }),
-      backupRetention: cdk.Duration.days(7),
-      storageEncrypted: true
-    });
+        }),
+        backupRetention: cdk.Duration.days(7),
+        storageEncrypted: true
+      });
+    }
     const rdsEventSubscriptionTopic = new sns.Topic(this, 'rds-event-subscription-topic', { });
     rdsEventSubscriptionTopic.addSubscription(new subscriptions.EmailSubscription(props.rdsEventSubscriptionEmailAddress));
     const rdsEventSubscription = new rds.CfnEventSubscription(this, 'rds-event-subscription', {
       enabled: true,
       snsTopicArn: rdsEventSubscriptionTopic.topicArn,
       sourceType: 'db-instance',
-      eventCategories: [ 'availability', 'configuration change', 'failure', 'maintenance', 'low storage']
+      eventCategories: ['availability', 'configuration change', 'failure', 'maintenance', 'low storage']
     });
 
     // EFS
@@ -247,12 +303,12 @@ export class EcsMoodleStack extends cdk.Stack {
     moodleTaskDefinition.addToExecutionRolePolicy(iam.PolicyStatement.fromJson({
       "Effect": "Allow",
       "Action": [
-          "ecr:GetAuthorizationToken",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
       ],
       "Resource": "*"
     }));
@@ -278,9 +334,9 @@ export class EcsMoodleStack extends cdk.Stack {
       portMappings: [{ containerPort: 8080 }],
       stopTimeout: cdk.Duration.seconds(120),
       environment: {
-        'MOODLE_DATABASE_TYPE': rdsEngine === 'mysql' ? 'mysqli' : 'mariadb',
-        'MOODLE_DATABASE_HOST': moodleDb.dbInstanceEndpointAddress,
-        'MOODLE_DATABASE_PORT_NUMBER': moodleDb.dbInstanceEndpointPort,
+        'MOODLE_DATABASE_TYPE': (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') ? 'auroramysql' : (rdsEngine === 'mysql' ? 'mysqli' : 'mariadb'),
+        'MOODLE_DATABASE_HOST': (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') ? (moodleDb as rds.DatabaseCluster).clusterEndpoint.hostname : (moodleDb as rds.DatabaseInstance).instanceEndpoint.hostname,
+        'MOODLE_DATABASE_PORT_NUMBER': (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') ? (moodleDb as rds.DatabaseCluster).clusterEndpoint.port.toString() : (moodleDb as rds.DatabaseInstance).instanceEndpoint.port.toString(),
         'MOODLE_DATABASE_NAME': this.MoodleDatabaseName,
         'MOODLE_DATABASE_USER': this.MoodleDatabaseUsername,
         'MOODLE_USERNAME': 'moodleadmin',
@@ -326,21 +382,22 @@ export class EcsMoodleStack extends cdk.Stack {
       circuitBreaker: { rollback: true }
     });
     moodleService.node.addDependency(cluster);
-    
-    // Add after task definition creation
-    moodleTaskDefinition.addToTaskRolePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'ssmmessages:CreateControlChannel',
-        'ssmmessages:CreateDataChannel',
-        'ssmmessages:OpenControlChannel',
-        'ssmmessages:OpenDataChannel'
-      ],
-      resources: ['*']
-    }));
+
+    // Add dependencies on Aurora instances
+    if (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') {
+      const cfnService = moodleService.node.defaultChild as ecs.CfnService;
+      const dbCluster = moodleDb as rds.DatabaseCluster;
+
+      // Find and depend on the actual CloudFormation DB instances
+      for (const child of dbCluster.node.children) {
+        if (child.node.defaultChild && child.node.defaultChild.constructor.name === 'CfnDBInstance') {
+          cfnService.addDependency(child.node.defaultChild as cdk.CfnResource);
+        }
+      }
+    }
 
     // Moodle ECS Service Task Auto Scaling
-    const moodleServiceScaling = moodleService.autoScaleTaskCount({ minCapacity: props.serviceReplicaDesiredCount, maxCapacity: 10 } );
+    const moodleServiceScaling = moodleService.autoScaleTaskCount({ minCapacity: props.serviceReplicaDesiredCount, maxCapacity: 10 });
     moodleServiceScaling.scaleOnCpuUtilization('cpu-scaling', {
       targetUtilizationPercent: 50
     });
@@ -357,17 +414,17 @@ export class EcsMoodleStack extends cdk.Stack {
       internetFacing: true,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC }
     });
-    const httpListener = alb.addListener('http-listener', { 
-      port: 80, 
+    const httpListener = alb.addListener('http-listener', {
+      port: 80,
       protocol: elbv2.ApplicationProtocol.HTTP,
       open: true,
       defaultAction: elbv2.ListenerAction.redirect({ protocol: 'HTTPS', port: '443', permanent: true })
     });
-    const httpsListener = alb.addListener('https-listener', { 
+    const httpsListener = alb.addListener('https-listener', {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
       open: true,
-      certificates: [ elbv2.ListenerCertificate.fromArn(props.albCertificateArn) ]
+      certificates: [elbv2.ListenerCertificate.fromArn(props.albCertificateArn)]
     });
     const targetGroup = httpsListener.addTargets('moodle-service-tg', {
       port: 8080,
