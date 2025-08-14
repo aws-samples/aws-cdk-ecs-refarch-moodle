@@ -27,9 +27,9 @@ const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   auroraServerlessMaxCapacity: app.node.tryGetContext('app-config/auroraServerlessMaxCapacity'),
   cacheEngine: app.node.tryGetContext('app-config/cacheEngine'),
   cacheDeploymentMode: app.node.tryGetContext('app-config/cacheDeploymentMode'),
+  cacheProvisionedInstanceType: app.node.tryGetContext('app-config/cacheProvisionedInstanceType'),
   cacheServerlessMaxStorageGB: app.node.tryGetContext('app-config/cacheServerlessMaxStorageGB'),
   cacheServerlessMaxCapacity: app.node.tryGetContext('app-config/cacheServerlessMaxCapacity'),
-  cacheServerlessMinCapacity: app.node.tryGetContext('app-config/cacheServerlessMinCapacity'),
-  cacheProvisionedInstanceType: app.node.tryGetContext('app-config/cacheProvisionedInstanceType')
+  cacheServerlessMinCapacity: app.node.tryGetContext('app-config/cacheServerlessMinCapacity')
 });
 ecsMoodleStack.addDependency(cloudFrontWAFWebAclStack);

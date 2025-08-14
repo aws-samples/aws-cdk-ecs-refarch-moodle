@@ -363,7 +363,6 @@ export class EcsMoodleStack extends cdk.Stack {
       cluster: cluster,
       taskDefinition: moodleTaskDefinition,
       desiredCount: props.serviceReplicaDesiredCount,
-      enableExecuteCommand: true,
       capacityProviderStrategies: [ // Every 1 task which uses FARGATE, 3 tasks will use FARGATE_SPOT (25% / 75%)
         {
           capacityProvider: 'FARGATE_SPOT',
