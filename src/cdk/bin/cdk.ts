@@ -20,9 +20,11 @@ const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   serviceHealthCheckGracePeriodSeconds: app.node.tryGetContext('app-config/serviceHealthCheckGracePeriodSeconds'),
   cfDistributionOriginTimeoutSeconds: app.node.tryGetContext('app-config/cfDistributionOriginTimeoutSeconds'),
   rdsEventSubscriptionEmailAddress: app.node.tryGetContext('app-config/rdsEventSubscriptionEmailAddress'),
-  rdsInstanceType: app.node.tryGetContext('app-config/rdsInstanceType'),
   rdsEngine: app.node.tryGetContext('app-config/rdsEngine'),
   rdsEngineVersion: app.node.tryGetContext('app-config/rdsEngineVersion'),
+  rdsInstanceType: app.node.tryGetContext('app-config/rdsInstanceType'),
+  auroraServerlessMinCapacity: app.node.tryGetContext('app-config/auroraServerlessMinCapacity'),
+  auroraServerlessMaxCapacity: app.node.tryGetContext('app-config/auroraServerlessMaxCapacity'),
   elastiCacheRedisInstanceType: app.node.tryGetContext('app-config/elastiCacheRedisInstanceType')
 });
 ecsMoodleStack.addDependency(cloudFrontWAFWebAclStack);
