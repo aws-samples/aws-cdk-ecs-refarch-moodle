@@ -43,11 +43,6 @@ export class EcsMoodleStack extends cdk.Stack {
   private readonly MoodleDatabaseName = 'moodledb';
   private readonly MoodleDatabaseUsername = 'dbadmin';
 
-  private supportsDatabaseInsights(instanceType: string): boolean {
-    const unsupportedTypes = ['t2.micro', 't2.small', 't3.micro', 't3.small', 't4g.micro', 't4g.small'];
-    return !unsupportedTypes.includes(instanceType);
-  }
-
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
 
@@ -87,6 +82,12 @@ export class EcsMoodleStack extends cdk.Stack {
     if (!validVersions[rdsEngine].includes(rdsEngineVersion)) {
       throw new Error(`Invalid rdsEngineVersion "${rdsEngineVersion}" for engine "${rdsEngine}". Valid versions: ${validVersions[rdsEngine].join(', ')}`);
     }
+
+    // Database insights support check
+    const supportsDatabaseInsights = (instanceType: string): boolean => {
+      const unsupportedTypes = ['t2.micro', 't2.small', 't3.micro', 't3.small', 't4g.micro', 't4g.small'];
+      return !unsupportedTypes.includes(instanceType);
+    };
 
     // Validate cache engine
     if (!['redis', 'valkey'].includes(props.cacheEngine)) {
@@ -214,7 +215,7 @@ export class EcsMoodleStack extends cdk.Stack {
         credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, {
           excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\'
         }),
-        ...(this.supportsDatabaseInsights(props.rdsInstanceType) && {
+        ...(supportsDatabaseInsights(props.rdsInstanceType) && {
           databaseInsightsMode: rds.DatabaseInsightsMode.ADVANCED,
           performanceInsightRetention: rds.PerformanceInsightRetention.MONTHS_15
         }),
