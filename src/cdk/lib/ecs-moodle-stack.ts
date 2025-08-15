@@ -1,25 +1,31 @@
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as cloudtrail from 'aws-cdk-lib/aws-cloudtrail';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as rds from 'aws-cdk-lib/aws-rds';
 import * as efs from 'aws-cdk-lib/aws-efs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
-import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
-import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as cloudtrail from 'aws-cdk-lib/aws-cloudtrail';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as rds from 'aws-cdk-lib/aws-rds';
+import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as cdk from 'aws-cdk-lib';
-import { SSMParameterReader } from './ssm-parameter-reader';
 
 export interface EcsMoodleStackProps extends cdk.StackProps {
+  useExistingAlbCertificate: boolean;
+  hostName: string;
+  hostedZoneId: string;
+  domainName: string;
   albCertificateArn: string;
   cfCertificateArn: string;
   cfDomain: string;
+  cfWafArn: string;
   moodleImageUri: string;
   serviceReplicaDesiredCount: number;
   serviceHealthCheckGracePeriodSeconds: number;
@@ -258,7 +264,6 @@ export class EcsMoodleStack extends cdk.Stack {
     });
 
     let cacheEndpoint: string;
-
     if (props.cacheDeploymentMode === 'serverless') {
       const moodleServerlessCache = new elasticache.CfnServerlessCache(this, `moodle-${props.cacheEngine}-serverless-cache`, {
         serverlessCacheName: `moodle-${props.cacheEngine}-serverless`,
@@ -407,6 +412,28 @@ export class EcsMoodleStack extends cdk.Stack {
     moodleEfs.connections.allowDefaultPortFrom(moodleService, 'From Moodle ECS Service');
     cacheSG.connections.allowFrom(moodleService, ec2.Port.tcp(6379), 'From Moodle ECS Service');
 
+    let albCertificateArn: string;
+    let hostedZone: route53.IHostedZone | undefined;
+
+    if (!props.useExistingAlbCertificate) {
+      // Import existing hosted zone
+      hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'hosted-zone', {
+        hostedZoneId: props.hostedZoneId,
+        zoneName: props.domainName
+      });
+      
+      // ALB certificate
+      const albCertificate = new acm.Certificate(this, 'alb-certificate', {
+        domainName: `${props.hostName}.${props.domainName}`,
+        validation: acm.CertificateValidation.fromDns(hostedZone)
+      });
+
+      albCertificateArn = albCertificate.certificateArn
+
+    } else {
+      albCertificateArn = props.albCertificateArn;
+    }
+
     // Moodle Load Balancer
     const alb = new elbv2.ApplicationLoadBalancer(this, 'moodle-alb', {
       loadBalancerName: 'moodle-ecs-alb',
@@ -424,7 +451,7 @@ export class EcsMoodleStack extends cdk.Stack {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
       open: true,
-      certificates: [elbv2.ListenerCertificate.fromArn(props.albCertificateArn)]
+      certificates: [elbv2.ListenerCertificate.fromArn(albCertificateArn)]
     });
     const targetGroup = httpsListener.addTargets('moodle-service-tg', {
       port: 8080,
@@ -441,11 +468,6 @@ export class EcsMoodleStack extends cdk.Stack {
     });
 
     // CloudFront distribution
-    const cfWafWebAclArnReader = new SSMParameterReader(this, 'cf-waf-web-acl-arn-ssm-param-reader', {
-      parameterName: 'cf-waf-web-acl-arn',
-      region: 'us-east-1'
-    })
-
     const cf = new cloudfront.Distribution(this, 'moodle-ecs-dist', {
       defaultBehavior: {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -458,15 +480,29 @@ export class EcsMoodleStack extends cdk.Stack {
       },
       domainNames: [props.cfDomain],
       certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString()),
-      webAclId: cfWafWebAclArnReader.getParameterValue()
+      webAclId: props.cfWafArn
     });
+
+    if (!props.useExistingAlbCertificate && hostedZone) {
+      // Route53 records for CloudFront
+      new route53.ARecord(this, 'cloudfront-alias-a-record', {
+        zone: hostedZone,
+        recordName: props.cfDomain,
+        target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(cf))
+      });
+      new route53.AaaaRecord(this, 'cloudfront-alias-aaa-record', {
+        zone: hostedZone,
+        recordName: props.cfDomain,
+        target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(cf))
+      });
+    }
 
     // Outputs
     new cdk.CfnOutput(this, 'APPLICATION-LOAD-BALANCER-DNS-NAME', {
       value: alb.loadBalancerDnsName
     });
     new cdk.CfnOutput(this, 'CLOUDFRONT-DNS-NAME', {
-      value: cf.distributionDomainName
+      value: (!props.useExistingAlbCertificate) ?  `${props.hostName}.${props.domainName}` : cf.distributionDomainName
     });
     new cdk.CfnOutput(this, 'MOODLE-USERNAME', {
       value: 'moodleadmin'

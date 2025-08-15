@@ -1,11 +1,20 @@
-import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
-import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as cdk from 'aws-cdk-lib';
-import { StackProps } from 'aws-cdk-lib';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 
-export class CloudFrontWAFWebAclStack extends cdk.Stack {
+export interface CloudFrontInfraStackProps extends cdk.StackProps {
+  useExistingCfCertificate: boolean;
+  domainName: string;
+  hostName: string;
+  hostedZoneId: string;
+}
 
-  constructor(scope: cdk.App, id: string, props: StackProps) {
+export class CloudFrontInfraStack extends cdk.Stack {
+  public readonly cfCertificate: acm.ICertificate;
+  public readonly cfWafArn: string;
+
+  constructor(scope: cdk.App, id: string, props: CloudFrontInfraStackProps) {
     super(scope, id, props);
 
     // WAFv2 for CloudFront
@@ -43,12 +52,21 @@ export class CloudFrontWAFWebAclStack extends cdk.Stack {
         }
       ]
     });
+    this.cfWafArn = cfWaf.attrArn
 
-    const ssmParam = new ssm.StringParameter(this, 'cf-waf-web-acl-arn-ssm-param', {
-      parameterName: 'cf-waf-web-acl-arn',
-      description: 'The WAFv2 Web ACL used for CloudFront for Moodle',
-      stringValue: cfWaf.attrArn
-    });
+    if (!props.useExistingCfCertificate) {
+      // Import existing hosted zone
+      const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'hosted-zone', {
+        hostedZoneId: props.hostedZoneId,
+        zoneName: props.domainName
+      });
+
+      // CloudFront certificate
+      this.cfCertificate = new acm.Certificate(this, 'cf-new-certificate', {
+        domainName: `${props.hostName}.${props.domainName}`,
+        validation: acm.CertificateValidation.fromDns(hostedZone)
+      });
+    }
 
     // Outputs
     new cdk.CfnOutput(this, 'CLOUDFRONT-WAF-WEB-ACL-ARN', {
