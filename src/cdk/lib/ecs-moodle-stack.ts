@@ -174,7 +174,11 @@ export class EcsMoodleStack extends cdk.Stack {
 
     if (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') {
       if (rdsEngine === 'aurora-serverless') {
-        const serverlessInstance = rds.ClusterInstance.serverlessV2('serverless');
+        const serverlessInstance = rds.ClusterInstance.serverlessV2('serverless', {
+          performanceInsightRetention: rds.PerformanceInsightRetention.MONTHS_15
+        }
+
+        );
 
         moodleDb = new rds.DatabaseCluster(this, 'moodle-aurora-cluster', {
           engine: getEngineConfig() as rds.IClusterEngine,
