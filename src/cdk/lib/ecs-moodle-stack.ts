@@ -1,8 +1,9 @@
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as cloudtrail from 'aws-cdk-lib/aws-cloudtrail';
-import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
+import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as efs from 'aws-cdk-lib/aws-efs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
@@ -17,6 +18,8 @@ import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as cdk from 'aws-cdk-lib';
 
+
+
 export interface EcsMoodleStackProps extends cdk.StackProps {
   useExistingAlbCertificate: boolean;
   hostName: string;
@@ -27,6 +30,7 @@ export interface EcsMoodleStackProps extends cdk.StackProps {
   cfDomain: string;
   cfWafArn: string;
   moodleImageUri: string;
+  containerPlatform: string;
   serviceReplicaDesiredCount: number;
   serviceHealthCheckGracePeriodSeconds: number;
   cfDistributionOriginTimeoutSeconds: number;
@@ -39,8 +43,8 @@ export interface EcsMoodleStackProps extends cdk.StackProps {
   cacheEngine: 'redis' | 'valkey';
   cacheDeploymentMode: 'provisioned' | 'serverless';
   cacheServerlessMaxStorageGB: number;
-  cacheServerlessMaxCapacity: number; 
-  cacheServerlessMinCapacity: number; 
+  cacheServerlessMaxCapacity: number;
+  cacheServerlessMinCapacity: number;
   cacheProvisionedInstanceType: string;
 }
 
@@ -52,9 +56,15 @@ export class EcsMoodleStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
 
+    // Default containerPlatform to X86 if not defined
+    const containerPlatform = props.containerPlatform || 'X86';
+    if (!['ARM', 'X86'].includes(containerPlatform)) {
+      throw new Error('containerPlatform must be either "ARM" or "X86"');
+    }
+
     // Default rdsEngine to mysql if not set
     const rdsEngine = props.rdsEngine || 'mysql';
-    
+
     // Get Aurora Serverless capacity from props with defaults
     const serverlessMinCapacity = props.auroraServerlessMinCapacity ?? 0.5;
     const serverlessMaxCapacity = props.auroraServerlessMaxCapacity ?? 100;
@@ -72,7 +82,6 @@ export class EcsMoodleStack extends cdk.Stack {
 
     // Default rdsEngineVersion to latest if both rdsEngine and rdsEngineVersion are not defined
     const rdsEngineVersion = (!props.rdsEngine && !props.rdsEngineVersion) ? getLatestVersion(rdsEngine) : props.rdsEngineVersion;
-
     if (!['mariadb', 'mysql', 'aurora', 'aurora-serverless'].includes(rdsEngine)) {
       throw new Error('rdsEngine must be either "mariadb", "mysql", "aurora", or "aurora-serverless"');
     }
@@ -229,7 +238,7 @@ export class EcsMoodleStack extends cdk.Stack {
         storageEncrypted: true
       });
     }
-    const rdsEventSubscriptionTopic = new sns.Topic(this, 'rds-event-subscription-topic', { });
+    const rdsEventSubscriptionTopic = new sns.Topic(this, 'rds-event-subscription-topic', {});
     rdsEventSubscriptionTopic.addSubscription(new subscriptions.EmailSubscription(props.rdsEventSubscriptionEmailAddress));
     const rdsEventSubscription = new rds.CfnEventSubscription(this, 'rds-event-subscription', {
       enabled: true,
@@ -304,8 +313,13 @@ export class EcsMoodleStack extends cdk.Stack {
     // Moodle ECS Task Definition
     const moodleTaskDefinition = new ecs.FargateTaskDefinition(this, 'moodle-task-def', {
       cpu: 2048,
-      memoryLimitMiB: 4096
+      memoryLimitMiB: 4096,
+      runtimePlatform: {
+        cpuArchitecture: containerPlatform === 'ARM' ? ecs.CpuArchitecture.ARM64 : ecs.CpuArchitecture.X86_64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX
+      }
     });
+
     moodleTaskDefinition.addToExecutionRolePolicy(iam.PolicyStatement.fromJson({
       "Effect": "Allow",
       "Action": [
@@ -331,11 +345,17 @@ export class EcsMoodleStack extends cdk.Stack {
       }
     });
 
+    // Moodle container image
+    const moodleImage = ecs.ContainerImage.fromAsset('../image/src', {
+      platform: containerPlatform === 'ARM' ? Platform.LINUX_ARM64 : Platform.LINUX_AMD64
+    });
+
     // Moodle container definition
     const moodlePasswordSecret = new secretsmanager.Secret(this, 'moodle-password-secret');
     const moodleContainerDefinition = moodleTaskDefinition.addContainer('moodle-container', {
       containerName: 'moodle',
-      image: ecs.ContainerImage.fromRegistry(props.moodleImageUri),
+      // image: ecs.ContainerImage.fromRegistry(props.moodleImageUri),
+      image: moodleImage,
       memoryLimitMiB: 4096,
       portMappings: [{ containerPort: 8080 }],
       stopTimeout: cdk.Duration.seconds(120),
@@ -421,7 +441,7 @@ export class EcsMoodleStack extends cdk.Stack {
         hostedZoneId: props.hostedZoneId,
         zoneName: props.domainName
       });
-      
+
       // ALB certificate
       const albCertificate = new acm.Certificate(this, 'alb-certificate', {
         domainName: `${props.hostName}.${props.domainName}`,
@@ -502,7 +522,7 @@ export class EcsMoodleStack extends cdk.Stack {
       value: alb.loadBalancerDnsName
     });
     new cdk.CfnOutput(this, 'CLOUDFRONT-DNS-NAME', {
-      value: (!props.useExistingAlbCertificate) ?  `${props.hostName}.${props.domainName}` : cf.distributionDomainName
+      value: (!props.useExistingAlbCertificate) ? `${props.hostName}.${props.domainName}` : cf.distributionDomainName
     });
     new cdk.CfnOutput(this, 'MOODLE-USERNAME', {
       value: 'moodleadmin'

@@ -53,6 +53,7 @@ const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   cfDomain: app.node.tryGetContext('app-config/cfDomain'),
   cfWafArn: cloudFrontInfraStack.cfWafArn,
   moodleImageUri: app.node.tryGetContext('app-config/moodleImageUri'),
+  containerPlatform: app.node.tryGetContext('app-config/containerPlatform'),
   serviceReplicaDesiredCount: app.node.tryGetContext('app-config/serviceReplicaDesiredCount'),
   serviceHealthCheckGracePeriodSeconds: app.node.tryGetContext('app-config/serviceHealthCheckGracePeriodSeconds'),
   cfDistributionOriginTimeoutSeconds: app.node.tryGetContext('app-config/cfDistributionOriginTimeoutSeconds'),
