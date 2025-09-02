@@ -41,7 +41,7 @@ if (!useExistingCfCertificate) {
 
 const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   env: {
-    region: process.env.CDK_DEFAULT_REGION // or whatever region you want
+    region: process.env.CDK_DEFAULT_REGION 
   },
   crossRegionReferences: true,
   useExistingAlbCertificate: useExistingAlbCertificate,
