@@ -337,6 +337,18 @@ export class EcsMoodleStack extends cdk.Stack {
       "Resource": "*"
     }));
 
+    // Add ECS Exec permissions to task role
+    moodleTaskDefinition.addToTaskRolePolicy(iam.PolicyStatement.fromJson({
+      "Effect": "Allow",
+      "Action": [
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel"
+      ],
+      "Resource": "*"
+    }));
+
     // EFS Volume
     moodleTaskDefinition.addVolume({
       name: 'moodle',
@@ -408,7 +420,8 @@ export class EcsMoodleStack extends cdk.Stack {
       maxHealthyPercent: 200,
       minHealthyPercent: 50,
       healthCheckGracePeriod: cdk.Duration.seconds(props.serviceHealthCheckGracePeriodSeconds),
-      circuitBreaker: { rollback: true }
+      circuitBreaker: { rollback: true },
+      enableExecuteCommand: true
     });
     moodleService.node.addDependency(cluster);
 
