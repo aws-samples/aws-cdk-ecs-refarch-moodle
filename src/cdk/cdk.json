@@ -1,9 +1,5 @@
 {
   "app": "npx ts-node --prefer-ts-exts bin/cdk.ts",
-  "watch": {
-    "include": ["**"],
-    "exclude": ["README.md", "cdk*.json", "**/*.d.ts", "**/*.js", "tsconfig.json", "package*.json", "yarn.lock", "node_modules", "test"]
-  },
   "context": {
     "@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId": true,
     "aws-cdk:enableDiffNoFail": "true",
@@ -16,11 +12,10 @@
     "@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021": true,
     "app-config/albCertificateArn": "",
     "app-config/cfCertificateArn": "",
-    "app-config/domainName": "",
-    "app-config/hostName": "",
-    "app-config/hostedZoneId": "",
-    "app-config/cfDomain": "",
-    "app-config/moodleImageUri": "",
+    "app-config/domainName": "moodle4.pjdavis.people.aws.dev",
+    "app-config/hostName": "demo",
+    "app-config/hostedZoneId": "Z042139021FUOY0Z10WVP",
+    "app-config/cfDomain": "demo.moodle4.pjdavis.people.aws.dev",
     "app-config/containerPlatform": "ARM",
     "app-config/serviceReplicaDesiredCount": 1,
     "app-config/serviceHealthCheckGracePeriodSeconds": 1800,
