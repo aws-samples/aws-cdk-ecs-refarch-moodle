@@ -1,4 +1,4 @@
-FROM bitnami/moodle:4.5
+FROM bitnamilegacy/moodle:5.0.2
 RUN apt-get update -y
 
 # Install PHP Redis and gosu
