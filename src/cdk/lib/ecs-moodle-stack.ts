@@ -373,8 +373,8 @@ export class EcsMoodleStack extends cdk.Stack {
       // image: ecs.ContainerImage.fromRegistry(props.moodleImageUri),
       image: moodleImage,
       memoryLimitMiB: 4096,
-      portMappings: [{ containerPort: 8080 }],
-      stopTimeout: cdk.Duration.seconds(120),
+      portMappings: [{ containerPort: 80 }],
+      stopTimeout: cdk.Duration.seconds(30),
       environment: {
         'MOODLE_DATABASE_TYPE': (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') ? 'auroramysql' : (rdsEngine === 'mysql' ? 'mysqli' : 'mariadb'),
         'MOODLE_DATABASE_HOST': (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') ? (moodleDb as rds.DatabaseCluster).clusterEndpoint.hostname : (moodleDb as rds.DatabaseInstance).instanceEndpoint.hostname,
@@ -384,9 +384,7 @@ export class EcsMoodleStack extends cdk.Stack {
         'MOODLE_USERNAME': 'moodleadmin',
         'MOODLE_EMAIL': 'hello@example.com',
         'MOODLE_SITE_NAME': 'Scalable Moodle on ECS Fargate',
-        'MOODLE_SKIP_BOOTSTRAP': 'no',
-        'MOODLE_SKIP_INSTALL': 'no',
-        'BITNAMI_DEBUG': 'true'
+        'MOODLE_DNS_NAME': `${props.hostName}.${props.domainName}`
       },
       secrets: {
         'MOODLE_DATABASE_PASSWORD': ecs.Secret.fromSecretsManager(moodleDb.secret!, 'password'),
@@ -396,7 +394,7 @@ export class EcsMoodleStack extends cdk.Stack {
     });
     moodleContainerDefinition.addMountPoints({
       sourceVolume: 'moodle',
-      containerPath: '/bitnami',
+      containerPath: '/moodle',
       readOnly: false
     });
 
@@ -491,16 +489,18 @@ export class EcsMoodleStack extends cdk.Stack {
       certificates: [elbv2.ListenerCertificate.fromArn(albCertificateArn)]
     });
     const targetGroup = httpsListener.addTargets('moodle-service-tg', {
-      port: 8080,
+      port: 80,
       targets: [
         moodleService.loadBalancerTarget({
           containerName: 'moodle',
-          containerPort: 8080,
+          containerPort: 80,
           protocol: ecs.Protocol.TCP
         })
       ],
       healthCheck: {
-        timeout: cdk.Duration.seconds(20)
+        timeout: cdk.Duration.seconds(20),
+        path: '/',
+        healthyHttpCodes: '200,303'
       }
     });
 
@@ -509,6 +509,7 @@ export class EcsMoodleStack extends cdk.Stack {
       defaultBehavior: {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         origin: new origins.LoadBalancerV2Origin(alb, {
+          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
           readTimeout: cdk.Duration.seconds(props.cfDistributionOriginTimeoutSeconds)
         }),
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
