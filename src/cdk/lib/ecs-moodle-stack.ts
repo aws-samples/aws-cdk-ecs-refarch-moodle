@@ -392,11 +392,13 @@ export class EcsMoodleStack extends cdk.Stack {
       },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'ecs-moodle' })
     });
-    moodleContainerDefinition.addMountPoints({
-      sourceVolume: 'moodle',
-      containerPath: '/moodle',
-      readOnly: false
-    });
+    moodleContainerDefinition.addMountPoints(
+      {
+        sourceVolume: 'moodle',
+        containerPath: '/mnt/moodle',
+        readOnly: false
+      } 
+  );
 
     // Moodle ECS Service
     const moodleService = new ecs.FargateService(this, 'moodle-service', {

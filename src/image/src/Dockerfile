@@ -13,7 +13,7 @@ ENV APACHE_LOCK_DIR=/var/lock/apache2
 RUN apt-get update -y
 
 # Install required packages
-RUN apt-get install -y autoconf wget build-essential gosu curl procps net-tools
+RUN apt-get install -y wget 
 
 RUN TEMP_DIR=$(mktemp -d) && \
     cd ${TEMP_DIR} && \
@@ -34,6 +34,9 @@ RUN a2dissite 000-default.conf && \
 
 # Copy PHP configuration for Moodle
 COPY ./moodle-php.ini /usr/local/etc/php/conf.d/moodle.ini
+
+# Remove base image moodledata directory
+RUN rm -rf /var/www/moodledata
 
 # Forward Apache logs to Docker log collector
 RUN ln -sf /dev/stdout /var/log/apache2/access.log && \
