@@ -22,9 +22,7 @@ import * as cdk from 'aws-cdk-lib';
 
 export interface EcsMoodleStackProps extends cdk.StackProps {
   useExistingAlbCertificate: boolean;
-  hostName: string;
   hostedZoneId: string;
-  domainName: string;
   albCertificateArn: string;
   cfCertificateArn: string;
   cfDomain: string;
@@ -55,6 +53,10 @@ export class EcsMoodleStack extends cdk.Stack {
 
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
+
+    // Derive domainName from cfDomain
+    const cfDomainParts = props.cfDomain.split('.');
+    const domainName = cfDomainParts.slice(1).join('.');
 
     // Default containerPlatform to X86 if not defined
     const containerPlatform = props.containerPlatform || 'X86';
@@ -384,7 +386,6 @@ export class EcsMoodleStack extends cdk.Stack {
     const moodlePasswordSecret = new secretsmanager.Secret(this, 'moodle-password-secret');
     const moodleContainerDefinition = moodleTaskDefinition.addContainer('moodle-container', {
       containerName: 'moodle',
-      // image: ecs.ContainerImage.fromRegistry(props.moodleImageUri),
       image: moodleImage,
       memoryLimitMiB: 4096,
       portMappings: [{ containerPort: 8080 }],
@@ -398,7 +399,7 @@ export class EcsMoodleStack extends cdk.Stack {
         'MOODLE_USERNAME': 'moodleadmin',
         'MOODLE_EMAIL': 'hello@example.com',
         'MOODLE_SITE_NAME': 'Scalable Moodle on ECS Fargate',
-        'MOODLE_DNS_NAME': `${props.hostName}.${props.domainName}`
+        'MOODLE_DNS_NAME': props.cfDomain
       },
       secrets: {
         'MOODLE_DATABASE_PASSWORD': ecs.Secret.fromSecretsManager(moodleDb.secret!, 'password'),
@@ -470,12 +471,12 @@ export class EcsMoodleStack extends cdk.Stack {
       // Import existing hosted zone
       hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'hosted-zone', {
         hostedZoneId: props.hostedZoneId,
-        zoneName: props.domainName
+        zoneName: domainName
       });
 
       // ALB certificate
       const albCertificate = new acm.Certificate(this, 'alb-certificate', {
-        domainName: `${props.hostName}.${props.domainName}`,
+        domainName: props.cfDomain,
         validation: acm.CertificateValidation.fromDns(hostedZone)
       });
 
@@ -556,7 +557,7 @@ export class EcsMoodleStack extends cdk.Stack {
       value: alb.loadBalancerDnsName
     });
     new cdk.CfnOutput(this, 'CLOUDFRONT-DNS-NAME', {
-      value: (!props.useExistingAlbCertificate) ? `${props.hostName}.${props.domainName}` : cf.distributionDomainName
+      value: (!props.useExistingAlbCertificate) ? props.cfDomain : cf.distributionDomainName
     });
     new cdk.CfnOutput(this, 'MOODLE-USERNAME', {
       value: 'moodleadmin'
