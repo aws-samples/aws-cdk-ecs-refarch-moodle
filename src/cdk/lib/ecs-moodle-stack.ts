@@ -98,10 +98,16 @@ export class EcsMoodleStack extends cdk.Stack {
       throw new Error(`Invalid rdsEngineVersion "${rdsEngineVersion}" for engine "${rdsEngine}". Valid versions: ${validVersions[rdsEngine].join(', ')}`);
     }
 
+    // Validate RDS instance type format
+    const validInstanceTypePattern = /^(db\.)?(t2|t3|t4g|m5|m6g|m7g|r5|r6g|r7g)\.(micro|small|medium|large|xlarge|2xlarge|4xlarge|8xlarge|12xlarge|16xlarge|24xlarge)$/;
+    if (!validInstanceTypePattern.test(props.rdsInstanceType)) {
+      throw new Error(`Invalid rdsInstanceType "${props.rdsInstanceType}". Must be a valid RDS instance type (e.g., db.t3.micro, t3.small, m5.large)`);
+    }
+
     // Database insights support check
     const supportsDatabaseInsights = (instanceType: string): boolean => {
       const unsupportedTypes = ['t2.micro', 't2.small', 't3.micro', 't3.small', 't4g.micro', 't4g.small'];
-      return !unsupportedTypes.includes(instanceType);
+      return !unsupportedTypes.includes(instanceType.replace('db.', ''));
     };
 
     // Validate cache engine
@@ -112,6 +118,14 @@ export class EcsMoodleStack extends cdk.Stack {
     // Validate cache deployment mode
     if (!['provisioned', 'serverless'].includes(props.cacheDeploymentMode)) {
       throw new Error('cacheDeploymentMode must be either "provisioned" or "serverless"');
+    }
+
+    // Validate cache instance type if using provisioned mode
+    if (props.cacheDeploymentMode === 'provisioned') {
+      const validCacheInstancePattern = /^cache\.(t2|t3|t4g|m4|m5|m6g|m7g|r4|r5|r6g|r7g)\.(micro|small|medium|large|xlarge|2xlarge|4xlarge|10xlarge|12xlarge|16xlarge|24xlarge)$/;
+      if (!validCacheInstancePattern.test(props.cacheProvisionedInstanceType)) {
+        throw new Error(`Invalid cacheProvisionedInstanceType "${props.cacheProvisionedInstanceType}". Must be a valid ElastiCache instance type (e.g., cache.t3.micro, cache.m5.large)`);
+      }
     }
 
     // Set defaults if not provided
@@ -373,7 +387,7 @@ export class EcsMoodleStack extends cdk.Stack {
       // image: ecs.ContainerImage.fromRegistry(props.moodleImageUri),
       image: moodleImage,
       memoryLimitMiB: 4096,
-      portMappings: [{ containerPort: 80 }],
+      portMappings: [{ containerPort: 8080 }],
       stopTimeout: cdk.Duration.seconds(30),
       environment: {
         'MOODLE_DATABASE_TYPE': (rdsEngine === 'aurora' || rdsEngine === 'aurora-serverless') ? 'auroramysql' : (rdsEngine === 'mysql' ? 'mysqli' : 'mariadb'),
@@ -491,11 +505,11 @@ export class EcsMoodleStack extends cdk.Stack {
       certificates: [elbv2.ListenerCertificate.fromArn(albCertificateArn)]
     });
     const targetGroup = httpsListener.addTargets('moodle-service-tg', {
-      port: 80,
+      port: 8080,
       targets: [
         moodleService.loadBalancerTarget({
           containerName: 'moodle',
-          containerPort: 80,
+          containerPort: 8080,
           protocol: ecs.Protocol.TCP
         })
       ],
