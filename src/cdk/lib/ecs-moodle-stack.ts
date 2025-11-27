@@ -154,15 +154,24 @@ export class EcsMoodleStack extends cdk.Stack {
         }
       }
     });
-    // Amazon ECS tasks hosted on Fargate using platform version 1.4.0 or later require both Amazon ECR VPC endpoints and the Amazon S3 gateway endpoints.
-    // Reference: https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html#ecr-setting-up-vpc-create
-    const ecrVpcEndpoint = vpc.addInterfaceEndpoint('ecr-vpc-endpoint', {
+
+    // VPC Endpoints for private subnet connectivity
+    vpc.addInterfaceEndpoint('ecr-vpc-endpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.ECR
     });
-    const s3VpcEndpoint = vpc.addGatewayEndpoint('s3-vpc-endpoint', {
+    vpc.addInterfaceEndpoint('ecr-dkr-vpc-endpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER
+    });
+    vpc.addGatewayEndpoint('s3-vpc-endpoint', {
       service: ec2.GatewayVpcEndpointAwsService.S3
     });
-
+    vpc.addInterfaceEndpoint('secrets-manager-vpc-endpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER
+    });
+    vpc.addInterfaceEndpoint('cloudwatch-logs-vpc-endpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS
+    });
+    
     // ECS Cluster
     const cluster = new ecs.Cluster(this, 'ecs-cluster', {
       vpc: vpc,
@@ -427,7 +436,8 @@ export class EcsMoodleStack extends cdk.Stack {
         },
         {
           capacityProvider: 'FARGATE',
-          weight: 1
+          weight: 1,
+          base: 1
         }
       ],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
@@ -486,26 +496,20 @@ export class EcsMoodleStack extends cdk.Stack {
       albCertificateArn = props.albCertificateArn;
     }
 
-    // Moodle Load Balancer
+    // Moodle Load Balancer (private, accessed via CloudFront VPC Origin)
     const alb = new elbv2.ApplicationLoadBalancer(this, 'moodle-alb', {
       loadBalancerName: 'moodle-ecs-alb',
       vpc: vpc,
-      internetFacing: true,
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC }
-    });
-    const httpListener = alb.addListener('http-listener', {
-      port: 80,
-      protocol: elbv2.ApplicationProtocol.HTTP,
-      open: true,
-      defaultAction: elbv2.ListenerAction.redirect({ protocol: 'HTTPS', port: '443', permanent: true })
+      internetFacing: false,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }
     });
     const httpsListener = alb.addListener('https-listener', {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
-      open: true,
+      open: false,
       certificates: [elbv2.ListenerCertificate.fromArn(albCertificateArn)]
     });
-    const targetGroup = httpsListener.addTargets('moodle-service-tg', {
+    httpsListener.addTargets('moodle-service-tg', {
       port: 8080,
       targets: [
         moodleService.loadBalancerTarget({
@@ -521,22 +525,50 @@ export class EcsMoodleStack extends cdk.Stack {
       }
     });
 
-    // CloudFront distribution
+    // CloudFront logging bucket
+    const cfLogBucket = new s3.Bucket(this, 'cloudfront-logs-bucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      lifecycleRules: [{
+        expiration: cdk.Duration.days(90)
+      }],
+      objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_PREFERRED
+    });
+
+    // Create CloudFront VPC Origin
+    const vpcOrigin = origins.VpcOrigin.withApplicationLoadBalancer(alb, {
+      httpsPort: 443,
+      originSslProtocols: [cloudfront.OriginSslPolicy.TLS_V1_2],
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+      vpcOriginName: 'moodle-alb-vpc-origin'
+    });
+
+    // CloudFront distribution with private ALB origin
     const cf = new cloudfront.Distribution(this, 'moodle-ecs-dist', {
       defaultBehavior: {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        origin: new origins.LoadBalancerV2Origin(alb, {
-          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-          readTimeout: cdk.Duration.seconds(props.cfDistributionOriginTimeoutSeconds)
-        }),
+        origin: vpcOrigin,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER
       },
       domainNames: [props.cfDomain],
       certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString()),
-      webAclId: props.cfWafArn
+      webAclId: props.cfWafArn,
+      enableLogging: true,
+      logBucket: cfLogBucket,
+      logFilePrefix: 'cloudfront-logs/',
+      logIncludesCookies: true
     });
+
+    // Allow CloudFront to access the private ALB using CloudFront managed prefix list
+    // Note: CloudFront uses a global managed prefix list (com.amazonaws.global.cloudfront.origin-facing)
+    alb.connections.allowFrom(
+      ec2.Peer.prefixList('pl-07f8c64944f5dc195'), // Global CloudFront origin-facing prefix list
+      ec2.Port.tcp(443), 
+      'Allow CloudFront to access private ALB'
+    );
 
     if (!props.useExistingAlbCertificate && hostedZone) {
       // Route53 records for CloudFront
