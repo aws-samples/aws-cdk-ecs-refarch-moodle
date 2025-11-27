@@ -496,6 +496,14 @@ export class EcsMoodleStack extends cdk.Stack {
       albCertificateArn = props.albCertificateArn;
     }
 
+    // Generate a secret value for CloudFront custom header verification
+    const cfCustomHeaderSecret = new secretsmanager.Secret(this, 'cf-custom-header-secret', {
+      generateSecretString: {
+        excludePunctuation: true,
+        passwordLength: 32
+      }
+    });
+
     // Moodle Load Balancer (private, accessed via CloudFront VPC Origin)
     const alb = new elbv2.ApplicationLoadBalancer(this, 'moodle-alb', {
       loadBalancerName: 'moodle-ecs-alb',
@@ -507,45 +515,56 @@ export class EcsMoodleStack extends cdk.Stack {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
       open: false,
-      certificates: [elbv2.ListenerCertificate.fromArn(albCertificateArn)]
+      certificates: [elbv2.ListenerCertificate.fromArn(albCertificateArn)],
+      defaultAction: elbv2.ListenerAction.fixedResponse(403, {
+        contentType: 'text/plain',
+        messageBody: 'Access denied'
+      })
     });
-    httpsListener.addTargets('moodle-service-tg', {
-      port: 8080,
-      targets: [
-        moodleService.loadBalancerTarget({
-          containerName: 'moodle',
-          containerPort: 8080,
-          protocol: ecs.Protocol.TCP
-        })
+
+    // Add rule to only allow requests with correct custom header
+    httpsListener.addAction('allow-cloudfront', {
+      priority: 1,
+      conditions: [
+        elbv2.ListenerCondition.httpHeader('X-Origin-Verify', [
+          cfCustomHeaderSecret.secretValue.unsafeUnwrap()
+        ])
       ],
-      healthCheck: {
-        timeout: cdk.Duration.seconds(20),
-        path: '/',
-        healthyHttpCodes: '200,303'
-      }
+      action: elbv2.ListenerAction.forward([
+        new elbv2.ApplicationTargetGroup(this, 'moodle-service-tg', {
+          vpc: vpc,
+          port: 8080,
+          protocol: elbv2.ApplicationProtocol.HTTP,
+          targets: [
+            moodleService.loadBalancerTarget({
+              containerName: 'moodle',
+              containerPort: 8080,
+              protocol: ecs.Protocol.TCP
+            })
+          ],
+          healthCheck: {
+            timeout: cdk.Duration.seconds(20),
+            path: '/',
+            healthyHttpCodes: '200,303'
+          }
+        })
+      ])
     });
 
-    // CloudFront logging bucket
-    const cfLogBucket = new s3.Bucket(this, 'cloudfront-logs-bucket', {
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      enforceSSL: true,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-      lifecycleRules: [{
-        expiration: cdk.Duration.days(90)
-      }],
-      objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_PREFERRED
-    });
-
-    // Create CloudFront VPC Origin
+    // Create VPC Origin for CloudFront distribution with custom header
     const vpcOrigin = origins.VpcOrigin.withApplicationLoadBalancer(alb, {
       httpsPort: 443,
       originSslProtocols: [cloudfront.OriginSslPolicy.TLS_V1_2],
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-      vpcOriginName: 'moodle-alb-vpc-origin'
+      vpcOriginName: 'moodle-alb-vpc-origin',
+      customHeaders: {
+        'X-Origin-Verify': cfCustomHeaderSecret.secretValue.unsafeUnwrap()
+      }
     });
 
-    // CloudFront distribution with private ALB origin
+    // CloudFront distribution with private ALB origin (HTTP/3 disabled for VPC Origin compatibility)
     const cf = new cloudfront.Distribution(this, 'moodle-ecs-dist', {
+      comment: `Moodle distribution for ${props.cfDomain}`,
       defaultBehavior: {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         origin: vpcOrigin,
@@ -556,18 +575,13 @@ export class EcsMoodleStack extends cdk.Stack {
       domainNames: [props.cfDomain],
       certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString()),
       webAclId: props.cfWafArn,
-      enableLogging: true,
-      logBucket: cfLogBucket,
-      logFilePrefix: 'cloudfront-logs/',
-      logIncludesCookies: true
     });
 
-    // Allow CloudFront to access the private ALB using CloudFront managed prefix list
-    // Note: CloudFront uses a global managed prefix list (com.amazonaws.global.cloudfront.origin-facing)
+    // Allow traffic from CloudFront VPC Origin managed prefix list
     alb.connections.allowFrom(
-      ec2.Peer.prefixList('pl-07f8c64944f5dc195'), // Global CloudFront origin-facing prefix list
-      ec2.Port.tcp(443), 
-      'Allow CloudFront to access private ALB'
+      ec2.Peer.prefixList('pl-82a045eb'),
+      ec2.Port.tcp(443),
+      'Allow CloudFront VPC Origin (managed prefix list) to access private ALB'
     );
 
     if (!props.useExistingAlbCertificate && hostedZone) {
