@@ -6,5 +6,3 @@ src/cdk/cdk.context.json
 mise.toml
 .mise/
 .vscode/settings.json
-
-src/image/src/Dockerfile
