@@ -30,7 +30,8 @@ const useExistingAlbCertificate = validateCertificateConfiguration(
 
 const cloudFrontInfraStack = new CloudFrontInfraStack(app, 'cloudfront-infra-stack', {
   env: {
-    region: 'us-east-1'
+    region: 'us-east-1',
+    account: process.env.CDK_DEFAULT_ACCOUNT
   },
   useExistingCfCertificate: useExistingCfCertificate,
   domainName: domainName,
@@ -44,7 +45,8 @@ if (!useExistingCfCertificate) {
 
 const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   env: {
-    region: process.env.CDK_DEFAULT_REGION 
+    region: process.env.CDK_DEFAULT_REGION,
+    account: process.env.CDK_DEFAULT_ACCOUNT
   },
   crossRegionReferences: true,
   useExistingAlbCertificate: useExistingAlbCertificate,
@@ -76,7 +78,8 @@ ecsMoodleStack.addDependency(cloudFrontInfraStack);
 // Create logging stack in us-east-1 with distribution ARN
 const cloudFrontLoggingStack = new CloudFrontLoggingStack(app, 'cloudfront-logging-stack', {
   env: {
-    region: 'us-east-1'
+    region: 'us-east-1',
+    account: process.env.CDK_DEFAULT_ACCOUNT
   },
   crossRegionReferences: true,
   distributionArn: ecsMoodleStack.distributionArn

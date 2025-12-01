@@ -8,6 +8,7 @@ import * as efs from 'aws-cdk-lib/aws-efs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as route53 from 'aws-cdk-lib/aws-route53';
@@ -152,7 +153,13 @@ export class EcsMoodleStack extends cdk.Stack {
       maxAzs: 2,
       flowLogs: {
         'flowlog-to-cloudwatch': {
-          trafficType: ec2.FlowLogTrafficType.ALL
+          trafficType: ec2.FlowLogTrafficType.ALL,
+          destination: ec2.FlowLogDestination.toCloudWatchLogs(
+            new logs.LogGroup(this, 'vpc-flow-logs', {
+              retention: logs.RetentionDays.ONE_WEEK,
+              removalPolicy: cdk.RemovalPolicy.DESTROY
+            })
+          )
         }
       }
     });
@@ -582,9 +589,13 @@ export class EcsMoodleStack extends cdk.Stack {
     // Export distribution ARN for logging setup in us-east-1
     this.distributionArn = cf.distributionArn;
 
+    const cfPrefixList = ec2.PrefixList.fromLookup(this, 'cloudfront-prefix-list', {
+      prefixListName: 'com.amazonaws.global.cloudfront.origin-facing'
+    })
+
     // Allow traffic from CloudFront VPC Origin managed prefix list
     alb.connections.allowFrom(
-      ec2.Peer.prefixList('pl-82a045eb'),
+      ec2.Peer.prefixList(cfPrefixList.prefixListId),
       ec2.Port.tcp(443),
       'Allow CloudFront VPC Origin (managed prefix list) to access private ALB'
     );
