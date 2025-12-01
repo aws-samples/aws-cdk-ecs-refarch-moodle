@@ -1,5 +1,4 @@
-# FROM bitnami/moodle:4.5
-FROM moodlehq/moodle-php-apache:8.3
+FROM moodlehq/moodle-php-apache:8.4 
 
 # Set Apache environment variables
 ENV APACHE_DOCUMENT_ROOT=/var/www/html

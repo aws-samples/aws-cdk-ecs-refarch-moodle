@@ -4,5 +4,7 @@ cdk-moodle-?.json
 mise.moodle-?.toml
 src/cdk/cdk.context.json
 mise.toml
+.mise/
 .vscode/settings.json
-src/cdk/cdk.json
+
+src/image/src/Dockerfile
