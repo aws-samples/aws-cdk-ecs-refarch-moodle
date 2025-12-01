@@ -141,7 +141,7 @@ If you prefer to manage certificates or DNS manually:
 
 1. **(Optional - only required if you followed Option 2 for manual certificate setup)** Configure CloudFront access:
    - Create DNS records for your domain pointing to the CloudFront distribution from the `CLOUDFRONTDNSNAME` output
-   - If using Route 53: Create an Alias record (A and AAAA) pointing to the CloudFront distribution
+   - If using Route 53: Create Alias records (A and AAAA) pointing to the CloudFront distribution
    - If using another DNS provider: Create a CNAME record pointing to the CloudFront distribution DNS name
    - Example: `moodle.example.com` → `abcd1234efgh.cloudfront.net`
    - **Note:** If you followed Option 1 (automated Route 53 setup), Alias records were created automatically during deployment
