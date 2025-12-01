@@ -2,6 +2,7 @@
 import cdk = require('aws-cdk-lib');
 import { EcsMoodleStack } from '../lib/ecs-moodle-stack';
 import { CloudFrontInfraStack } from '../lib/cloudfront-infra-stack';
+import { CloudFrontLoggingStack } from '../lib/cloudfront-logging-stack';
 
 const app = new cdk.App();
 
@@ -71,6 +72,16 @@ const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   cacheServerlessMinCapacity: app.node.tryGetContext('app-config/cacheServerlessMinCapacity')
 });
 ecsMoodleStack.addDependency(cloudFrontInfraStack);
+
+// Create logging stack in us-east-1 with distribution ARN
+const cloudFrontLoggingStack = new CloudFrontLoggingStack(app, 'cloudfront-logging-stack', {
+  env: {
+    region: 'us-east-1'
+  },
+  crossRegionReferences: true,
+  distributionArn: ecsMoodleStack.distributionArn
+});
+cloudFrontLoggingStack.addDependency(ecsMoodleStack);
 
 
 function validateCertificateConfiguration(

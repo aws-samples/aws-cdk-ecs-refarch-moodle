@@ -47,6 +47,8 @@ export interface EcsMoodleStackProps extends cdk.StackProps {
 }
 
 export class EcsMoodleStack extends cdk.Stack {
+  public readonly distributionArn: string;
+
   // Local Variables
   private readonly MoodleDatabaseName = 'moodledb';
   private readonly MoodleDatabaseUsername = 'dbadmin';
@@ -576,6 +578,9 @@ export class EcsMoodleStack extends cdk.Stack {
       certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString()),
       webAclId: props.cfWafArn,
     });
+
+    // Export distribution ARN for logging setup in us-east-1
+    this.distributionArn = cf.distributionArn;
 
     // Allow traffic from CloudFront VPC Origin managed prefix list
     alb.connections.allowFrom(

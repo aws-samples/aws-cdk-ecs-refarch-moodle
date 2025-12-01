@@ -18,7 +18,7 @@ export class CloudFrontInfraStack extends cdk.Stack {
     super(scope, id, props);
 
     // WAFv2 for CloudFront
-    var cfWaf = new wafv2.CfnWebACL(this, 'cf-waf', {
+    const cfWaf = new wafv2.CfnWebACL(this, 'cf-waf', {
       name: 'moodle-cf-waf-acl',
       description: 'Web ACL for Moodle CloudFront',
       scope: 'CLOUDFRONT',
@@ -52,7 +52,7 @@ export class CloudFrontInfraStack extends cdk.Stack {
         }
       ]
     });
-    this.cfWafArn = cfWaf.attrArn
+    this.cfWafArn = cfWaf.attrArn;
 
     if (!props.useExistingCfCertificate) {
       // Import existing hosted zone
