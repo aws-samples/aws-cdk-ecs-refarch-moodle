@@ -131,7 +131,7 @@ If you prefer to manage certificates or DNS manually:
 1. Configure Moodle caching for improved performance:
    - Use the cache endpoint from the `MOODLECACHEENDPOINTADDRESSANDPORT` output 
    - Follow the [official Moodle documentation for adding cache store instances](https://docs.moodle.org/en/Caching#Adding_a_cache_store_instance)
-     - **Important:** When configuring the cache store, ensure the "Use TLS encryption" option is selected for serverless caches as this required for ElastiCache Serverless. <!-- TODO - Check if this works for provisioned -->     
+     - **Important:** When configuring the cache store, ensure the "Use TLS encryption" option is selected (required for ElastiCache Serverless, recommended for provisioned instances with encryption enabled)
    - Set the Application and Session cache to use the Redis/Valkey cache store instance
 
 1. Scale the Moodle instances:
