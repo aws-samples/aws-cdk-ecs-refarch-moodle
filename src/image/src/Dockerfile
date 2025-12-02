@@ -17,6 +17,9 @@ RUN apt-get update -y && \
 # Configure Apache to listen on port 8080
 RUN sed -i 's/Listen 80/Listen 8080/' /etc/apache2/ports.conf
 
+# Install Composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
 # Download and extract Moodle
 RUN TEMP_DIR=$(mktemp -d) && \
     cd ${TEMP_DIR} && \

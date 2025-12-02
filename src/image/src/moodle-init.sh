@@ -28,6 +28,12 @@ if [ ! -f "$MOODLE_DIR/config.php" ]; then
     chown -R www-data:www-data "$MOUNT_DIR/moodle" "$MOUNT_DIR/moodledata"
     chmod 770 "$MOUNT_DIR/moodledata"
     
+    # Install Composer dependencies as www-data user (required for Moodle 5.1+)
+    echo "Installing Composer dependencies..."
+    cd "$MOODLE_DIR"
+    sudo -u www-data composer install --no-dev --classmap-authoritative
+    echo "Composer dependencies installed"
+    
     echo "Installing Moodle as www-data user..."
     cd "$MOODLE_DIR"
     sudo -u www-data php admin/cli/install.php \
