@@ -6,41 +6,54 @@ import { CloudFrontLoggingStack } from '../lib/cloudfront-logging-stack';
 
 const app = new cdk.App();
 
-const cfDomain = app.node.tryGetContext('app-config/cfDomain');
+const domain = app.node.tryGetContext('app-config/domain');
 const hostedZoneId = app.node.tryGetContext('app-config/hostedZoneId');
+const enableCloudFront = app.node.tryGetContext('app-config/enableCloudFront') ?? true;
 let cfCertificateArn = app.node.tryGetContext('app-config/cfCertificateArn');
 let albCertificateArn = app.node.tryGetContext('app-config/albCertificateArn')
 
-// Derive hostName and domainName from cfDomain
-const cfDomainParts = cfDomain.split('.');
-const hostName = cfDomainParts[0];
-const domainName = cfDomainParts.slice(1).join('.');
+// Validate required configuration
+if (!domain) {
+  throw new Error('domain must be set in the CDK context');
+}
+
+// Derive hostName and domainName from domain
+const domainParts = domain.split('.');
+const hostName = domainParts[0];
+const domainName = domainParts.slice(1).join('.');
 
 const useExistingCfCertificate = validateCertificateConfiguration(
   cfCertificateArn,
   hostedZoneId,
-  cfDomain
+  domain
 );
 
 const useExistingAlbCertificate = validateCertificateConfiguration(
   albCertificateArn,
   hostedZoneId,
-  cfDomain
+  domain
 );
 
-const cloudFrontInfraStack = new CloudFrontInfraStack(app, 'cloudfront-infra-stack', {
-  env: {
-    region: 'us-east-1',
-    account: process.env.CDK_DEFAULT_ACCOUNT
-  },
-  useExistingCfCertificate: useExistingCfCertificate,
-  domainName: domainName,
-  hostName: hostName,
-  hostedZoneId: hostedZoneId,
-});
+let cloudFrontInfraStack: CloudFrontInfraStack | undefined;
+let cfWafArn: string | undefined;
 
-if (!useExistingCfCertificate) {
-  cfCertificateArn = cloudFrontInfraStack.cfCertificate.certificateArn;
+if (enableCloudFront) {
+  cloudFrontInfraStack = new CloudFrontInfraStack(app, 'cloudfront-infra-stack', {
+    env: {
+      region: 'us-east-1',
+      account: process.env.CDK_DEFAULT_ACCOUNT
+    },
+    useExistingCfCertificate: useExistingCfCertificate,
+    domainName: domainName,
+    hostName: hostName,
+    hostedZoneId: hostedZoneId,
+  });
+
+  if (!useExistingCfCertificate) {
+    cfCertificateArn = cloudFrontInfraStack.cfCertificate.certificateArn;
+  }
+  
+  cfWafArn = cloudFrontInfraStack.cfWafArn;
 }
 
 const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
@@ -48,13 +61,14 @@ const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
     region: process.env.CDK_DEFAULT_REGION,
     account: process.env.CDK_DEFAULT_ACCOUNT
   },
-  crossRegionReferences: true,
+  crossRegionReferences: enableCloudFront,
+  enableCloudFront: enableCloudFront,
   useExistingAlbCertificate: useExistingAlbCertificate,
   hostedZoneId: app.node.tryGetContext('app-config/hostedZoneId'),
   albCertificateArn: albCertificateArn,
   cfCertificateArn: cfCertificateArn,
-  cfDomain: app.node.tryGetContext('app-config/cfDomain'),
-  cfWafArn: cloudFrontInfraStack.cfWafArn,
+  domain: domain,
+  cfWafArn: cfWafArn,
   moodleImageUri: app.node.tryGetContext('app-config/moodleImageUri'),
   containerPlatform: app.node.tryGetContext('app-config/containerPlatform'),
   serviceReplicaDesiredCount: app.node.tryGetContext('app-config/serviceReplicaDesiredCount'),
@@ -73,24 +87,29 @@ const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
   cacheServerlessMaxCapacity: app.node.tryGetContext('app-config/cacheServerlessMaxCapacity'),
   cacheServerlessMinCapacity: app.node.tryGetContext('app-config/cacheServerlessMinCapacity')
 });
-ecsMoodleStack.addDependency(cloudFrontInfraStack);
 
-// Create logging stack in us-east-1 with distribution ARN
-const cloudFrontLoggingStack = new CloudFrontLoggingStack(app, 'cloudfront-logging-stack', {
-  env: {
-    region: 'us-east-1',
-    account: process.env.CDK_DEFAULT_ACCOUNT
-  },
-  crossRegionReferences: true,
-  distributionArn: ecsMoodleStack.distributionArn
-});
-cloudFrontLoggingStack.addDependency(ecsMoodleStack);
+if (cloudFrontInfraStack) {
+  ecsMoodleStack.addDependency(cloudFrontInfraStack);
+}
+
+// Create logging stack in us-east-1 with distribution ARN (only if CloudFront is enabled)
+if (enableCloudFront) {
+  const cloudFrontLoggingStack = new CloudFrontLoggingStack(app, 'cloudfront-logging-stack', {
+    env: {
+      region: 'us-east-1',
+      account: process.env.CDK_DEFAULT_ACCOUNT
+    },
+    crossRegionReferences: true,
+    distributionArn: ecsMoodleStack.distributionArn!
+  });
+  cloudFrontLoggingStack.addDependency(ecsMoodleStack);
+}
 
 
 function validateCertificateConfiguration(
   certificateArn: string,
   hostedZoneId: string,
-  cfDomain: string
+  domain: string
 ): boolean {
   if (certificateArn && certificateArn !== "") {
     // Validate ACM certificate ARN format
@@ -110,13 +129,13 @@ function validateCertificateConfiguration(
       throw new Error(`Invalid hosted zone ID format: ${hostedZoneId}`);
     }
     
-    if (!cfDomain || cfDomain === "") {
-      throw new Error('cfDomain must be set when certificate ARN is not provided');
+    if (!domain || domain === "") {
+      throw new Error('domain must be set when certificate ARN is not provided');
     }
     // Validate domain format (must have at least one dot)
     const domainPattern = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?(\.[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?)+$/;
-    if (!domainPattern.test(cfDomain)) {
-      throw new Error(`Invalid cfDomain format: ${cfDomain}`);
+    if (!domainPattern.test(domain)) {
+      throw new Error(`Invalid domain format: ${domain}`);
     }
     
     return false; // Create new certificate

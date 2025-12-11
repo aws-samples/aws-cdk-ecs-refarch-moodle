@@ -63,17 +63,23 @@ If you prefer to manage certificates or DNS manually:
    
    **If you followed Option 1 (automated Route 53 setup):**
    - `app-config/hostedZoneId`: Your Route 53 hosted zone ID
-   - `app-config/cfDomain`: Domain name for CloudFront (e.g., `moodle.example.com`)
+   - `app-config/domain`: Domain name for your Moodle application (e.g., `moodle.example.com`)
    - `app-config/albCertificateArn`: Leave as empty string `""`
    - `app-config/cfCertificateArn`: Leave as empty string `""`
    
    **If you followed Option 2 (manual certificate setup):**
    - `app-config/albCertificateArn`: ARN of the ACM certificate for the ALB (in your deployment region)
    - `app-config/cfCertificateArn`: ARN of the ACM certificate for CloudFront (must be in `us-east-1`)
-   - `app-config/cfDomain`: Domain name for CloudFront (e.g., `moodle.example.com`)
+   - `app-config/domain`: Domain name for your Moodle application (e.g., `moodle.example.com`)
    - `app-config/hostedZoneId`: Leave as empty string `""` (unless using Route 53 for DNS records)
    
    **Common configuration for both options:**
+   
+   CloudFront Configuration:
+   - `app-config/enableCloudFront`: Set to `true` to deploy CloudFront distribution (default), or `false` to access Moodle directly via ALB (default: `true`)
+     - When `true`: Moodle is accessed through CloudFront with the ALB in private subnets
+     - When `false`: Moodle is accessed directly via the ALB in public subnets (CloudFront is not deployed)
+   - `app-config/cfDistributionOriginTimeoutSeconds`: CloudFront origin response timeout in seconds (default: `60`) - only used when `enableCloudFront` is `true`
    
    Container Configuration:
    - `app-config/containerPlatform`: Set to `"ARM"` or `"X86"` based on your preference (default: `"ARM"`)
@@ -98,9 +104,6 @@ If you prefer to manage certificates or DNS manually:
    - `app-config/cacheServerlessMaxCapacity`: Maximum ECPU capacity for serverless cache (default: `100`) - only used when `cacheDeploymentMode` is `"serverless"`. Set to `""` (empty string) when using provisioned cache
    - `app-config/cacheProvisionedInstanceType`: Instance type for provisioned cache (e.g., `"cache.t3.micro"`, `"cache.m5.large"`) - only used when `cacheDeploymentMode` is `"provisioned"`. Default is `""` (empty string) for serverless cache; set to a valid instance type when using provisioned cache
    
-   CloudFront Configuration:
-   - `app-config/cfDistributionOriginTimeoutSeconds`: CloudFront origin response timeout in seconds (default: `60`)
-   
 1. **(Optional)** If using Finch instead of Docker, set the environment variable:
    ```bash
    export CDK_DOCKER=finch
@@ -120,7 +123,9 @@ If you prefer to manage certificates or DNS manually:
 
 1. Once successfully deployed, Moodle begins first-time installation, which takes approximately 15-20 minutes. Check the progress by viewing the logs in the Amazon ECS console.
 
-1. After installation completes, you can access the application using the CloudFront URL shown in the deployment output `CLOUDFRONTDNSNAME`. 
+1. After installation completes, you can access the application:
+   - **If CloudFront is enabled** (`enableCloudFront: true`): Use the CloudFront URL shown in the deployment output `CLOUDFRONTDNSNAME`
+   - **If CloudFront is disabled** (`enableCloudFront: false`): Use the ALB URL shown in the deployment output `MOODLEDNSNAME` 
 
 ## Post-deployment steps
 

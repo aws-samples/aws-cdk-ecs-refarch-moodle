@@ -22,12 +22,13 @@ import * as cdk from 'aws-cdk-lib';
 
 
 export interface EcsMoodleStackProps extends cdk.StackProps {
+  enableCloudFront: boolean;
   useExistingAlbCertificate: boolean;
   hostedZoneId: string;
   albCertificateArn: string;
-  cfCertificateArn: string;
-  cfDomain: string;
-  cfWafArn: string;
+  cfCertificateArn?: string;
+  domain: string;
+  cfWafArn?: string;
   moodleImageUri: string;
   containerPlatform: string;
   serviceReplicaDesiredCount: number;
@@ -48,7 +49,7 @@ export interface EcsMoodleStackProps extends cdk.StackProps {
 }
 
 export class EcsMoodleStack extends cdk.Stack {
-  public readonly distributionArn: string;
+  public readonly distributionArn?: string;
 
   // Local Variables
   private readonly MoodleDatabaseName = 'moodledb';
@@ -57,9 +58,9 @@ export class EcsMoodleStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
 
-    // Derive domainName from cfDomain
-    const cfDomainParts = props.cfDomain.split('.');
-    const domainName = cfDomainParts.slice(1).join('.');
+    // Derive domainName from domain
+    const domainParts = props.domain.split('.');
+    const domainName = domainParts.slice(1).join('.');
 
     // Default containerPlatform to X86 if not defined
     const containerPlatform = props.containerPlatform || 'X86';
@@ -417,7 +418,7 @@ export class EcsMoodleStack extends cdk.Stack {
         'MOODLE_USERNAME': 'moodleadmin',
         'MOODLE_EMAIL': 'hello@example.com',
         'MOODLE_SITE_NAME': 'Scalable Moodle on ECS Fargate',
-        'MOODLE_DNS_NAME': props.cfDomain
+        'MOODLE_DNS_NAME': props.domain
       },
       secrets: {
         'MOODLE_DATABASE_PASSWORD': ecs.Secret.fromSecretsManager(moodleDb.secret!, 'password'),
@@ -495,7 +496,7 @@ export class EcsMoodleStack extends cdk.Stack {
 
       // ALB certificate
       const albCertificate = new acm.Certificate(this, 'alb-certificate', {
-        domainName: props.cfDomain,
+        domainName: props.domain,
         validation: acm.CertificateValidation.fromDns(hostedZone)
       });
 
@@ -505,122 +506,169 @@ export class EcsMoodleStack extends cdk.Stack {
       albCertificateArn = props.albCertificateArn;
     }
 
-    // Generate a secret value for CloudFront custom header verification
-    const cfCustomHeaderSecret = new secretsmanager.Secret(this, 'cf-custom-header-secret', {
-      generateSecretString: {
-        excludePunctuation: true,
-        passwordLength: 32
+    // Generate a secret value for CloudFront custom header verification (only if CloudFront is enabled)
+    let cfCustomHeaderSecret: secretsmanager.Secret | undefined;
+    if (props.enableCloudFront) {
+      cfCustomHeaderSecret = new secretsmanager.Secret(this, 'cf-custom-header-secret', {
+        generateSecretString: {
+          excludePunctuation: true,
+          passwordLength: 32
+        }
+      });
+    }
+
+    // Moodle Load Balancer - private (accessed via CloudFront) or public (direct access)
+    const alb = new elbv2.ApplicationLoadBalancer(this, 'moodle-alb', {
+      loadBalancerName: props.enableCloudFront ? 'moodle-ecs-alb' : 'moodle-ecs-alb-direct',
+      vpc: vpc,
+      internetFacing: !props.enableCloudFront, // Public if CloudFront is disabled
+      vpcSubnets: { 
+        subnetType: props.enableCloudFront 
+          ? ec2.SubnetType.PRIVATE_WITH_EGRESS 
+          : ec2.SubnetType.PUBLIC 
+      }
+    });
+    // Create target group for Moodle service
+    const moodleTargetGroup = new elbv2.ApplicationTargetGroup(this, props.enableCloudFront ? 'moodle-service-tg' : 'moodle-service-direct-tg', {
+      vpc: vpc,
+      port: 8080,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targets: [
+        moodleService.loadBalancerTarget({
+          containerName: 'moodle',
+          containerPort: 8080,
+          protocol: ecs.Protocol.TCP
+        })
+      ],
+      healthCheck: {
+        timeout: cdk.Duration.seconds(20),
+        path: '/',
+        healthyHttpCodes: '200,303'
       }
     });
 
-    // Moodle Load Balancer (private, accessed via CloudFront VPC Origin)
-    const alb = new elbv2.ApplicationLoadBalancer(this, 'moodle-alb', {
-      loadBalancerName: 'moodle-ecs-alb',
-      vpc: vpc,
-      internetFacing: false,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }
-    });
     const httpsListener = alb.addListener('https-listener', {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
-      open: false,
+      open: !props.enableCloudFront, // Open to internet if CloudFront is disabled
       certificates: [elbv2.ListenerCertificate.fromArn(albCertificateArn)],
-      defaultAction: elbv2.ListenerAction.fixedResponse(403, {
-        contentType: 'text/plain',
-        messageBody: 'Access denied'
-      })
+      defaultAction: props.enableCloudFront 
+        ? elbv2.ListenerAction.fixedResponse(403, {
+            contentType: 'text/plain',
+            messageBody: 'Access denied'
+          })
+        : elbv2.ListenerAction.forward([moodleTargetGroup])
     });
 
-    // Add rule to only allow requests with correct custom header
-    httpsListener.addAction('allow-cloudfront', {
-      priority: 1,
-      conditions: [
-        elbv2.ListenerCondition.httpHeader('X-Origin-Verify', [
-          cfCustomHeaderSecret.secretValue.unsafeUnwrap()
-        ])
-      ],
-      action: elbv2.ListenerAction.forward([
-        new elbv2.ApplicationTargetGroup(this, 'moodle-service-tg', {
-          vpc: vpc,
-          port: 8080,
-          protocol: elbv2.ApplicationProtocol.HTTP,
-          targets: [
-            moodleService.loadBalancerTarget({
-              containerName: 'moodle',
-              containerPort: 8080,
-              protocol: ecs.Protocol.TCP
-            })
-          ],
-          healthCheck: {
-            timeout: cdk.Duration.seconds(20),
-            path: '/',
-            healthyHttpCodes: '200,303'
-          }
-        })
-      ])
-    });
+    // Add rule to only allow requests with correct custom header (only if CloudFront is enabled)
+    if (props.enableCloudFront && cfCustomHeaderSecret) {
+      httpsListener.addAction('allow-cloudfront', {
+        priority: 1,
+        conditions: [
+          elbv2.ListenerCondition.httpHeader('X-Origin-Verify', [
+            cfCustomHeaderSecret.secretValue.unsafeUnwrap()
+          ])
+        ],
+        action: elbv2.ListenerAction.forward([moodleTargetGroup])
+      });
+    }
 
-    // Create VPC Origin for CloudFront distribution with custom header
-    const vpcOrigin = origins.VpcOrigin.withApplicationLoadBalancer(alb, {
-      httpsPort: 443,
-      originSslProtocols: [cloudfront.OriginSslPolicy.TLS_V1_2],
-      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-      vpcOriginName: 'moodle-alb-vpc-origin',
-      customHeaders: {
-        'X-Origin-Verify': cfCustomHeaderSecret.secretValue.unsafeUnwrap()
-      }
-    });
+    // Create CloudFront distribution only if enabled
+    let cf: cloudfront.Distribution | undefined;
+    if (props.enableCloudFront && cfCustomHeaderSecret && props.cfCertificateArn && props.cfWafArn) {
+      // Create VPC Origin for CloudFront distribution with custom header
+      const vpcOrigin = origins.VpcOrigin.withApplicationLoadBalancer(alb, {
+        httpsPort: 443,
+        originSslProtocols: [cloudfront.OriginSslPolicy.TLS_V1_2],
+        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+        vpcOriginName: 'moodle-alb-vpc-origin',
+        customHeaders: {
+          'X-Origin-Verify': cfCustomHeaderSecret.secretValue.unsafeUnwrap()
+        }
+      });
 
-    // CloudFront distribution with private ALB origin (HTTP/3 disabled for VPC Origin compatibility)
-    const cf = new cloudfront.Distribution(this, 'moodle-ecs-dist', {
-      comment: `Moodle distribution for ${props.cfDomain}`,
-      defaultBehavior: {
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        origin: vpcOrigin,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER
-      },
-      domainNames: [props.cfDomain],
-      certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString()),
-      webAclId: props.cfWafArn,
-    });
+      // CloudFront distribution with private ALB origin (HTTP/3 disabled for VPC Origin compatibility)
+      cf = new cloudfront.Distribution(this, 'moodle-ecs-dist', {
+        comment: `Moodle distribution for ${props.domain}`,
+        defaultBehavior: {
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          origin: vpcOrigin,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER
+        },
+        domainNames: [props.domain],
+        certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn),
+        webAclId: props.cfWafArn,
+      });
 
-    // Export distribution ARN for logging setup in us-east-1
-    this.distributionArn = cf.distributionArn;
+      // Export distribution ARN for logging setup in us-east-1
+      this.distributionArn = cf.distributionArn;
+    }
 
-    const cfPrefixList = ec2.PrefixList.fromLookup(this, 'cloudfront-prefix-list', {
-      prefixListName: 'com.amazonaws.global.cloudfront.origin-facing'
-    })
+    // Configure ALB security based on CloudFront enablement
+    if (props.enableCloudFront) {
+      const cfPrefixList = ec2.PrefixList.fromLookup(this, 'cloudfront-prefix-list', {
+        prefixListName: 'com.amazonaws.global.cloudfront.origin-facing'
+      });
 
-    // Allow traffic from CloudFront VPC Origin managed prefix list
-    alb.connections.allowFrom(
-      ec2.Peer.prefixList(cfPrefixList.prefixListId),
-      ec2.Port.tcp(443),
-      'Allow CloudFront VPC Origin (managed prefix list) to access private ALB'
-    );
+      // Allow traffic from CloudFront VPC Origin managed prefix list
+      alb.connections.allowFrom(
+        ec2.Peer.prefixList(cfPrefixList.prefixListId),
+        ec2.Port.tcp(443),
+        'Allow CloudFront VPC Origin (managed prefix list) to access private ALB'
+      );
+    } else {
+      // ALB is already configured as internet-facing and open=true for direct access
+      // No additional security group rules needed as the listener is already open
+    }
 
     if (!props.useExistingAlbCertificate && hostedZone) {
-      // Route53 records for CloudFront
-      new route53.ARecord(this, 'cloudfront-alias-a-record', {
-        zone: hostedZone,
-        recordName: props.cfDomain,
-        target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(cf))
-      });
-      new route53.AaaaRecord(this, 'cloudfront-alias-aaa-record', {
-        zone: hostedZone,
-        recordName: props.cfDomain,
-        target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(cf))
-      });
+      if (props.enableCloudFront && cf) {
+        // Route53 records for CloudFront
+        new route53.ARecord(this, 'domain-alias-a-record', {
+          zone: hostedZone,
+          recordName: props.domain,
+          target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(cf))
+        });
+        new route53.AaaaRecord(this, 'domain-alias-aaaa-record', {
+          zone: hostedZone,
+          recordName: props.domain,
+          target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(cf))
+        });
+      } else {
+        // Route53 records for direct ALB access
+        new route53.ARecord(this, 'domain-alias-a-record', {
+          zone: hostedZone,
+          recordName: props.domain,
+          target: route53.RecordTarget.fromAlias(new targets.LoadBalancerTarget(alb))
+        });
+        new route53.AaaaRecord(this, 'domain-alias-aaaa-record', {
+          zone: hostedZone,
+          recordName: props.domain,
+          target: route53.RecordTarget.fromAlias(new targets.LoadBalancerTarget(alb))
+        });
+      }
     }
 
     // Outputs
     new cdk.CfnOutput(this, 'APPLICATION-LOAD-BALANCER-DNS-NAME', {
       value: alb.loadBalancerDnsName
     });
-    new cdk.CfnOutput(this, 'CLOUDFRONT-DNS-NAME', {
-      value: (!props.useExistingAlbCertificate) ? props.cfDomain : cf.distributionDomainName
-    });
+    
+    if (props.enableCloudFront && cf) {
+      new cdk.CfnOutput(this, 'CLOUDFRONT-DNS-NAME', {
+        value: (!props.useExistingAlbCertificate) ? props.domain : cf.distributionDomainName
+      });
+      new cdk.CfnOutput(this, 'MOODLE-CLOUDFRONT-DIST-ID', {
+        value: cf.distributionId
+      });
+    } else {
+      new cdk.CfnOutput(this, 'MOODLE-DNS-NAME', {
+        value: (!props.useExistingAlbCertificate) ? props.domain : alb.loadBalancerDnsName
+      });
+    }
+    
     new cdk.CfnOutput(this, 'MOODLE-USERNAME', {
       value: 'moodleadmin'
     });
@@ -638,9 +686,6 @@ export class EcsMoodleStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, 'MOODLE-SERVICE-NAME', {
       value: moodleService.serviceName
-    });
-    new cdk.CfnOutput(this, 'MOODLE-CLOUDFRONT-DIST-ID', {
-      value: cf.distributionId
     });
   }
 }
