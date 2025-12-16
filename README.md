@@ -49,6 +49,13 @@ If you prefer to manage certificates or DNS manually:
 
 ## Deployment steps
 
+1. Set the AWS_REGION environment variable for your desired deployment region:
+   ```bash
+   export AWS_REGION=us-west-2  # Replace with your preferred region
+   ```
+   
+   This ensures that AWS CLI commands and CDK deployment target the correct region.
+
 1. Navigate to the CDK app directory:
    ```bash
    cd src/cdk
