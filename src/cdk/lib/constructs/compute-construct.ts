@@ -89,18 +89,6 @@ export class ComputeConstruct extends Construct {
       "Resource": "*"
     }));
 
-    // Add ECS Exec permissions to task role
-    taskDefinition.addToTaskRolePolicy(iam.PolicyStatement.fromJson({
-      "Effect": "Allow",
-      "Action": [
-        "ssmmessages:CreateControlChannel",
-        "ssmmessages:CreateDataChannel",
-        "ssmmessages:OpenControlChannel",
-        "ssmmessages:OpenDataChannel"
-      ],
-      "Resource": "*"
-    }));
-
     // EFS Volume
     taskDefinition.addVolume({
       name: 'moodle',
@@ -188,7 +176,6 @@ export class ComputeConstruct extends Construct {
       minHealthyPercent: 50,
       healthCheckGracePeriod: cdk.Duration.seconds(props.serviceHealthCheckGracePeriodSeconds),
       circuitBreaker: { rollback: true },
-      enableExecuteCommand: true
     });
 
     service.node.addDependency(this.cluster);
