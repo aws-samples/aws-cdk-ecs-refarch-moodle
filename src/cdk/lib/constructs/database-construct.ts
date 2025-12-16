@@ -38,7 +38,11 @@ export class DatabaseConstruct extends Construct {
 
     // Validation
     this.validateEngineAndVersion(rdsEngine, props.rdsEngineVersion);
-    this.validateInstanceType(props.rdsInstanceType);
+    
+    // Only validate instance type for non-serverless engines
+    if (rdsEngine !== 'aurora-serverless') {
+      this.validateInstanceType(props.rdsInstanceType);
+    }
 
     // Get latest available version for the engine
     const getLatestVersion = (engine: string) => {
