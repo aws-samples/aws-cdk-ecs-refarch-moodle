@@ -154,6 +154,22 @@ If you prefer to manage certificates or DNS manually:
 
 ## Post-deployment steps
 
+1. **(Required if you followed Option 2 for manual certificate setup)** Configure DNS records:
+   
+   **If CloudFront is enabled** (`enableCloudFront: true`):
+   - Create DNS records for your domain pointing to the CloudFront distribution from the `CLOUDFRONTDNSNAME` output
+   - If using Route 53: Create Alias records (A and AAAA) pointing to the CloudFront distribution
+   - If using another DNS provider: Create a CNAME record pointing to the CloudFront distribution DNS name
+   - Example: `moodle.example.com` → `abcd1234efgh.cloudfront.net`
+   
+   **If CloudFront is disabled** (`enableCloudFront: false`):
+   - Create DNS records for your domain pointing to the Application Load Balancer from the `MOODLEDNSNAME` output
+   - If using Route 53: Create Alias records (A and AAAA) pointing to the ALB
+   - If using another DNS provider: Create a CNAME record pointing to the ALB DNS name
+   - Example: `moodle.example.com` → `moodle-alb-123456789.us-west-2.elb.amazonaws.com`
+   
+   **Note:** If you followed Option 1 (automated Route 53 setup), DNS records were created automatically during deployment and this step can be skipped.
+
 1. Retrieve Moodle credentials:
    - Username: Found in the `MOODLEUSERNAME` output
    - Password: Fetch from AWS Secrets Manager using the ARN in the `MOODLEPASSWORDSECRETARN` output
@@ -168,13 +184,6 @@ If you prefer to manage certificates or DNS manually:
    - Configure `app-config/serviceReplicaDesiredCount` in `src/cdk/cdk.json` to set the number of replicas
    - Optionally adjust `app-config/serviceHealthCheckGracePeriodSeconds` from 1800 to 300 seconds after initial deployment
    - Run `cdk diff` to preview changes, then `cdk deploy --all` to apply
-
-1. **(Optional - only required if you followed Option 2 for manual certificate setup)** Configure CloudFront access:
-   - Create DNS records for your domain pointing to the CloudFront distribution from the `CLOUDFRONTDNSNAME` output
-   - If using Route 53: Create Alias records (A and AAAA) pointing to the CloudFront distribution
-   - If using another DNS provider: Create a CNAME record pointing to the CloudFront distribution DNS name
-   - Example: `moodle.example.com` → `abcd1234efgh.cloudfront.net`
-   - **Note:** If you followed Option 1 (automated Route 53 setup), Alias records were created automatically during deployment
 
 ## Cleanup
 
