@@ -1,6 +1,6 @@
 # Modernize Moodle LMS with AWS serverless containers
 
-This repository contains an [AWS Cloud Development Kit (AWS CDK)](https://aws.amazon.com/cdk/) application to deploy a highly-available, elastic, and scalable Moodle LMS application using AWS serverless technologies. The solution leverages [Amazon Elastic Container Services (Amazon ECS)](https://aws.amazon.com/ecs/) with [AWS Fargate](https://aws.amazon.com/fargate/) for serverless container orchestration, [Amazon Aurora Serverless](https://aws.amazon.com/rds/aurora/serverless/) for the database, and [Amazon ElastiCache Serverless](https://aws.amazon.com/elasticache/features/#Serverless) for caching. For workloads requiring more predictable performance or specific instance sizing, the solution also supports provisioned alternatives for both the database (Aurora Provisioned or RDS) and cache (ElastiCache Provisioned) layers.
+This repository contains an [AWS Cloud Development Kit (AWS CDK)](https://aws.amazon.com/cdk/) application to deploy a highly-available, elastic, and scalable Moodle LMS application using AWS serverless technologies. The solution leverages [Amazon Elastic Container Services (Amazon ECS)](https://aws.amazon.com/ecs/) with [AWS Fargate](https://aws.amazon.com/fargate/) for serverless container orchestration, [Amazon Aurora Serverless v2](https://aws.amazon.com/rds/aurora/serverless/) for the database, and [Amazon ElastiCache Serverless](https://aws.amazon.com/elasticache/features/#Serverless) for caching. For workloads requiring more predictable performance or specific instance sizing, the solution also supports provisioned alternatives for both the database (Aurora Provisioned or RDS) and cache (ElastiCache Provisioned) layers.
 
 **For detailed background and architecture overview, please visit the blog post:** [How to run Moodle LMS on serverless containers with AWS](https://aws.amazon.com/blogs/publicsector/modernize-moodle-lms-aws-serverless-containers/)
 
@@ -188,7 +188,7 @@ To delete the application infrastructure and avoid ongoing costs:
 This solution deploys:
 - Amazon ECS with AWS Fargate for running Moodle containers
 - Application Load Balancer for distributing traffic
-- Amazon Aurora Serverless or provisioned for the database
+- Amazon Aurora Serverless v2 or provisioned for the database
 - Amazon ElastiCache (Redis or Valkey) in serverless or provisioned mode for caching
 - Amazon EFS for shared file storage
 - Amazon CloudFront for content delivery
