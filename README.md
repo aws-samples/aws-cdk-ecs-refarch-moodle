@@ -2,7 +2,7 @@
 
 This repository contains an [AWS Cloud Development Kit (AWS CDK)](https://aws.amazon.com/cdk/) application to deploy a highly-available, elastic, and scalable Moodle LMS application using AWS serverless technologies. The solution leverages [Amazon Elastic Container Services (Amazon ECS)](https://aws.amazon.com/ecs/) with [AWS Fargate](https://aws.amazon.com/fargate/) for serverless container orchestration, [Amazon Aurora Serverless v2](https://aws.amazon.com/rds/aurora/serverless/) for the database, and [Amazon ElastiCache Serverless](https://aws.amazon.com/elasticache/features/#Serverless) for caching. For workloads requiring more predictable performance or specific instance sizing, the solution also supports provisioned alternatives for both the database (Aurora Provisioned or RDS) and cache (ElastiCache Provisioned) layers.
 
-**For detailed background and architecture overview, please visit the blog post:** [How to run Moodle LMS on serverless containers with AWS](https://aws.amazon.com/blogs/publicsector/modernize-moodle-lms-aws-serverless-containers/)
+**For detailed background and architecture overview, please visit the blog post:** [Modernize Moodle LMS with AWS serverless services](https://aws.amazon.com/blogs/publicsector/modernize-moodle-lms-with-aws-serverless-services/)
 
 ## Architecture
 
@@ -20,7 +20,7 @@ This solution deploys:
 - AWS Secrets Manager for credential management
 - Amazon VPC with public and private subnets
 
-For more details, see the [blog post](https://aws.amazon.com/blogs/publicsector/modernize-moodle-lms-aws-serverless-containers/).
+For more details, see the [blog post](https://aws.amazon.com/blogs/publicsector/modernize-moodle-lms-with-aws-serverless-services/).
 
 ## Prerequisites
 
