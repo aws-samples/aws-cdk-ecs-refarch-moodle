@@ -1,1 +1,8 @@
 .DS_Store
+src/cdk/cdk.out.*
+cdk-moodle-?.json
+mise.moodle-?.toml
+src/cdk/cdk.context.json
+mise.toml
+.mise/
+.vscode/settings.json

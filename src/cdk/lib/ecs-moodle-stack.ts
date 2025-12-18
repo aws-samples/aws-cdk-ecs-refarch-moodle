@@ -1,324 +1,189 @@
-import * as ecs from 'aws-cdk-lib/aws-ecs';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as rds from 'aws-cdk-lib/aws-rds';
-import * as efs from 'aws-cdk-lib/aws-efs';
-import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
-import * as elasticache from 'aws-cdk-lib/aws-elasticache';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
-import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
-import * as acm from 'aws-cdk-lib/aws-certificatemanager';
-import * as iam from 'aws-cdk-lib/aws-iam';
-import * as cloudtrail from 'aws-cdk-lib/aws-cloudtrail';
-import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as sns from 'aws-cdk-lib/aws-sns';
-import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cdk from 'aws-cdk-lib';
-import { SSMParameterReader } from './ssm-parameter-reader';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { CacheConstruct } from './constructs/cache-construct';
+import { CloudFrontConstruct } from './constructs/cloudfront-construct';
+import { ComputeConstruct } from './constructs/compute-construct';
+import { DatabaseConstruct } from './constructs/database-construct';
+import { DnsConstruct } from './constructs/dns-construct';
+import { LoadBalancerConstruct } from './constructs/load-balancer-construct';
+import { NetworkConstruct } from './constructs/network-construct';
+import { StorageConstruct } from './constructs/storage-construct';
 
 export interface EcsMoodleStackProps extends cdk.StackProps {
+  enableCloudFront: boolean;
+  useExistingAlbCertificate: boolean;
+  hostedZoneId: string;
   albCertificateArn: string;
-  cfCertificateArn: string;
-  cfDomain: string;
+  cfCertificateArn?: string;
+  domain: string;
+  cfWafArn?: string;
   moodleImageUri: string;
+  containerPlatform: string;
   serviceReplicaDesiredCount: number;
   serviceHealthCheckGracePeriodSeconds: number;
   cfDistributionOriginTimeoutSeconds: number;
   rdsEventSubscriptionEmailAddress: string;
+  rdsEngine: string;
+  rdsEngineVersion: string;
   rdsInstanceType: string;
-  elastiCacheRedisInstanceType: string;
+  auroraServerlessMinCapacity?: number;
+  auroraServerlessMaxCapacity?: number;
+  cacheEngine: 'redis' | 'valkey';
+  cacheDeploymentMode: 'provisioned' | 'serverless';
+  cacheServerlessMaxStorageGB: number;
+  cacheServerlessMaxCapacity: number;
+  cacheServerlessMinCapacity: number;
+  cacheProvisionedInstanceType: string;
 }
 
 export class EcsMoodleStack extends cdk.Stack {
-  // Local Variables
-  private readonly MoodleDatabaseName = 'moodledb';
-  private readonly MoodleDatabaseUsername = 'dbadmin';
-  
+  public readonly distributionArn?: string;
+
   constructor(scope: cdk.App, id: string, props: EcsMoodleStackProps) {
     super(scope, id, props);
 
-    // CloudTrail
-    const trailBucket = new s3.Bucket(this, 'cloudtrail-bucket', {
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      enforceSSL: true,
-      encryption: s3.BucketEncryption.S3_MANAGED
-    });
-    const trail = new cloudtrail.Trail(this, 'cloudtrail-trail', {
-      bucket: trailBucket
+    // 1. Network Infrastructure
+    const network = new NetworkConstruct(this, 'Network');
+
+    // 2. Database
+    const database = new DatabaseConstruct(this, 'Database', {
+      vpc: network.vpc,
+      rdsEngine: props.rdsEngine,
+      rdsEngineVersion: props.rdsEngineVersion,
+      rdsInstanceType: props.rdsInstanceType,
+      auroraServerlessMinCapacity: props.auroraServerlessMinCapacity,
+      auroraServerlessMaxCapacity: props.auroraServerlessMaxCapacity,
+      rdsEventSubscriptionEmailAddress: props.rdsEventSubscriptionEmailAddress
     });
 
-    // VPC
-    const vpc = new ec2.Vpc(this, 'moodle-vpc', {
-      maxAzs: 2,
-      flowLogs: {
-        'flowlog-to-cloudwatch': {
-          trafficType: ec2.FlowLogTrafficType.ALL
+    // 3. Cache
+    const cache = new CacheConstruct(this, 'Cache', {
+      vpc: network.vpc,
+      cacheEngine: props.cacheEngine,
+      cacheDeploymentMode: props.cacheDeploymentMode,
+      cacheServerlessMaxStorageGB: props.cacheServerlessMaxStorageGB,
+      cacheServerlessMaxCapacity: props.cacheServerlessMaxCapacity,
+      cacheServerlessMinCapacity: props.cacheServerlessMinCapacity,
+      cacheProvisionedInstanceType: props.cacheProvisionedInstanceType
+    });
+
+    // 4. Storage
+    const storage = new StorageConstruct(this, 'Storage', {
+      vpc: network.vpc
+    });
+
+    // 5. Compute
+    const compute = new ComputeConstruct(this, 'Compute', {
+      vpc: network.vpc,
+      database: database.database,
+      fileSystem: storage.fileSystem,
+      accessPoint: storage.accessPoint,
+      cacheSecurityGroup: cache.securityGroup,
+      containerPlatform: props.containerPlatform,
+      serviceReplicaDesiredCount: props.serviceReplicaDesiredCount,
+      serviceHealthCheckGracePeriodSeconds: props.serviceHealthCheckGracePeriodSeconds,
+      rdsEngine: props.rdsEngine,
+      databaseName: database.databaseName,
+      databaseUsername: database.databaseUsername,
+      domain: props.domain,
+      moodleImageUri: props.moodleImageUri
+    });
+
+    // Generate CloudFront custom header secret if CloudFront is enabled
+    let cfCustomHeaderSecret: secretsmanager.Secret | undefined;
+    if (props.enableCloudFront) {
+      cfCustomHeaderSecret = new secretsmanager.Secret(this, 'cf-custom-header-secret', {
+        generateSecretString: {
+          excludePunctuation: true,
+          passwordLength: 32
         }
-      }
-    });
-    // Amazon ECS tasks hosted on Fargate using platform version 1.4.0 or later require both Amazon ECR VPC endpoints and the Amazon S3 gateway endpoints.
-    // Reference: https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html#ecr-setting-up-vpc-create
-    const ecrVpcEndpoint = vpc.addInterfaceEndpoint('ecr-vpc-endpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.ECR
-    });
-    const s3VpcEndpoint = vpc.addGatewayEndpoint('s3-vpc-endpoint', {
-      service: ec2.GatewayVpcEndpointAwsService.S3
+      });
+    }
+
+    // 6. Load Balancer
+    const loadBalancer = new LoadBalancerConstruct(this, 'LoadBalancer', {
+      vpc: network.vpc,
+      service: compute.service,
+      enableCloudFront: props.enableCloudFront,
+      useExistingAlbCertificate: props.useExistingAlbCertificate,
+      albCertificateArn: props.albCertificateArn,
+      hostedZoneId: props.hostedZoneId,
+      domain: props.domain,
+      cfCustomHeaderSecret
     });
 
-    // ECS Cluster
-    const cluster = new ecs.Cluster(this, 'ecs-cluster', {
-      vpc: vpc,
-      clusterName: 'moodle-ecs-cluster',
-      containerInsightsV2: ecs.ContainerInsights.ENABLED,
-      enableFargateCapacityProviders: true
-    });
+    // 7. CloudFront (optional)
+    let cloudFront: CloudFrontConstruct | undefined;
+    if (props.enableCloudFront && cfCustomHeaderSecret && props.cfCertificateArn && props.cfWafArn) {
+      cloudFront = new CloudFrontConstruct(this, 'CloudFront', {
+        loadBalancer: loadBalancer.loadBalancer,
+        cfCustomHeaderSecret,
+        cfCertificateArn: props.cfCertificateArn,
+        cfWafArn: props.cfWafArn,
+        domain: props.domain,
+        cfDistributionOriginTimeoutSeconds: props.cfDistributionOriginTimeoutSeconds
+      });
 
-    // RDS
-    const moodleDb = new rds.DatabaseInstance(this, 'moodle-db', {
-      engine: rds.DatabaseInstanceEngine.mysql({ version: rds.MysqlEngineVersion.VER_8_4_4}),
-      vpc: vpc,
-      vpcSubnets: { 
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
-      },
-      instanceType: new ec2.InstanceType(props.rdsInstanceType),
-      allocatedStorage: 30,
-      maxAllocatedStorage: 300,
-      storageType: rds.StorageType.GP2,
-      autoMinorVersionUpgrade: true,
-      multiAz: true,
-      databaseName: this.MoodleDatabaseName,
-      credentials: rds.Credentials.fromGeneratedSecret(this.MoodleDatabaseUsername, { excludeCharacters: '(" %+~`#$&*()|[]{}:;<>?!\'/^-,@_=\\' }), // Punctuations are causing issue with Moodle connecting to the database
-      enablePerformanceInsights: true,
-      backupRetention: cdk.Duration.days(7),
-      storageEncrypted: true
-    });
-    const rdsEventSubscriptionTopic = new sns.Topic(this, 'rds-event-subscription-topic', { });
-    rdsEventSubscriptionTopic.addSubscription(new subscriptions.EmailSubscription(props.rdsEventSubscriptionEmailAddress));
-    const rdsEventSubscription = new rds.CfnEventSubscription(this, 'rds-event-subscription', {
-      enabled: true,
-      snsTopicArn: rdsEventSubscriptionTopic.topicArn,
-      sourceType: 'db-instance',
-      eventCategories: [ 'availability', 'configuration change', 'failure', 'maintenance', 'low storage']
-    });
+      this.distributionArn = cloudFront.distribution.distributionArn;
+    }
 
-    // EFS
-    const moodleEfs = new efs.FileSystem(this, 'moodle-efs', {
-      vpc: vpc,
-      lifecyclePolicy: efs.LifecyclePolicy.AFTER_30_DAYS,
-      outOfInfrequentAccessPolicy: efs.OutOfInfrequentAccessPolicy.AFTER_1_ACCESS,
-      performanceMode: efs.PerformanceMode.GENERAL_PURPOSE,
-      throughputMode: efs.ThroughputMode.ELASTIC,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      enableAutomaticBackups: true
-    });
-    const moodleEfsAccessPoint = moodleEfs.addAccessPoint('moodle-efs-access-point', {
-      path: '/'
-    });
-
-    // ElastiCache Redis
-    const redisSG = new ec2.SecurityGroup(this, 'moodle-redis-sg', {
-      vpc: vpc
-    });
-
-    const redisSubnetGroup = new elasticache.CfnSubnetGroup(this, 'redis-subnet-group', {
-      cacheSubnetGroupName: `${cdk.Names.uniqueId(this)}-redis-subnet-group`,
-      description: 'Moodle Redis Subnet Group',
-      subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds
-    });
-
-    const moodleRedis = new elasticache.CfnReplicationGroup(this, 'moodle-redis', {
-      replicationGroupDescription: 'Moodle Redis',
-      cacheNodeType: props.elastiCacheRedisInstanceType,
-      engine: 'redis',
-      numCacheClusters: 2,
-      multiAzEnabled: true,
-      automaticFailoverEnabled: true,
-      autoMinorVersionUpgrade: true,
-      cacheSubnetGroupName: `${cdk.Names.uniqueId(this)}-redis-subnet-group`,
-      securityGroupIds: [ redisSG.securityGroupId ],
-      atRestEncryptionEnabled: true
-    });
-    moodleRedis.addDependency(redisSubnetGroup);
-
-    // Moodle ECS Task Definition
-    const moodleTaskDefinition = new ecs.FargateTaskDefinition(this, 'moodle-task-def', {
-      cpu: 2048,
-      memoryLimitMiB: 4096
-    });
-    moodleTaskDefinition.addToExecutionRolePolicy(iam.PolicyStatement.fromJson({
-      "Effect": "Allow",
-      "Action": [
-          "ecr:GetAuthorizationToken",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-      ],
-      "Resource": "*"
-    }));
-
-    // EFS Volume
-    moodleTaskDefinition.addVolume({
-      name: 'moodle',
-      efsVolumeConfiguration: {
-        fileSystemId: moodleEfs.fileSystemId,
-        transitEncryption: "ENABLED",
-        authorizationConfig: {
-          accessPointId: moodleEfsAccessPoint.accessPointId
-        }
-      }
-    });
-
-    // Moodle container definition
-    const moodlePasswordSecret = new secretsmanager.Secret(this, 'moodle-password-secret');
-    const moodleContainerDefinition = moodleTaskDefinition.addContainer('moodle-container', {
-      containerName: 'moodle',
-      image: ecs.ContainerImage.fromRegistry(props.moodleImageUri),
-      memoryLimitMiB: 4096,
-      portMappings: [{ containerPort: 8080 }],
-      stopTimeout: cdk.Duration.seconds(120),
-      environment: {
-        'MOODLE_DATABASE_TYPE': 'mysqli',
-        'MOODLE_DATABASE_HOST': moodleDb.dbInstanceEndpointAddress,
-        'MOODLE_DATABASE_PORT_NUMBER': moodleDb.dbInstanceEndpointPort,
-        'MOODLE_DATABASE_NAME': this.MoodleDatabaseName,
-        'MOODLE_DATABASE_USER': this.MoodleDatabaseUsername,
-        'MOODLE_USERNAME': 'moodleadmin',
-        'MOODLE_EMAIL': 'hello@example.com',
-        'MOODLE_SITE_NAME': 'Scalable Moodle on ECS Fargate',
-        'MOODLE_SKIP_BOOTSTRAP': 'no',
-        'MOODLE_SKIP_INSTALL': 'no',
-        'BITNAMI_DEBUG': 'true'
-      },
-      secrets: {
-        'MOODLE_DATABASE_PASSWORD': ecs.Secret.fromSecretsManager(moodleDb.secret!, 'password'),
-        'MOODLE_PASSWORD': ecs.Secret.fromSecretsManager(moodlePasswordSecret)
-      },
-      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'ecs-moodle' })
-    });
-    moodleContainerDefinition.addMountPoints({
-      sourceVolume: 'moodle',
-      containerPath: '/bitnami',
-      readOnly: false
-    });
-
-    // Moodle ECS Service
-    const moodleService = new ecs.FargateService(this, 'moodle-service', {
-      cluster: cluster,
-      taskDefinition: moodleTaskDefinition,
-      desiredCount: props.serviceReplicaDesiredCount,
-      capacityProviderStrategies: [ // Every 1 task which uses FARGATE, 3 tasks will use FARGATE_SPOT (25% / 75%)
-        {
-          capacityProvider: 'FARGATE_SPOT',
-          weight: 3
-        },
-        {
-          capacityProvider: 'FARGATE',
-          weight: 1
-        }
-      ],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      enableECSManagedTags: true,
-      maxHealthyPercent: 200,
-      minHealthyPercent: 50,
-      healthCheckGracePeriod: cdk.Duration.seconds(props.serviceHealthCheckGracePeriodSeconds),
-      circuitBreaker: { rollback: true }
-    });
-    moodleService.node.addDependency(cluster);
-    
-    // Moodle ECS Service Task Auto Scaling
-    const moodleServiceScaling = moodleService.autoScaleTaskCount({ minCapacity: props.serviceReplicaDesiredCount, maxCapacity: 10 } );
-    moodleServiceScaling.scaleOnCpuUtilization('cpu-scaling', {
-      targetUtilizationPercent: 50
-    });
-
-    // Allow access using Security Groups
-    moodleDb.connections.allowDefaultPortFrom(moodleService, 'From Moodle ECS Service');
-    moodleEfs.connections.allowDefaultPortFrom(moodleService, 'From Moodle ECS Service');
-    redisSG.connections.allowFrom(moodleService, ec2.Port.tcp(6379), 'From Moodle ECS Service');
-
-    // Moodle Load Balancer
-    const alb = new elbv2.ApplicationLoadBalancer(this, 'moodle-alb', {
-      loadBalancerName: 'moodle-ecs-alb',
-      vpc: vpc,
-      internetFacing: true,
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC }
-    });
-    const httpListener = alb.addListener('http-listener', { 
-      port: 80, 
-      protocol: elbv2.ApplicationProtocol.HTTP,
-      open: true,
-      defaultAction: elbv2.ListenerAction.redirect({ protocol: 'HTTPS', port: '443', permanent: true })
-    });
-    const httpsListener = alb.addListener('https-listener', { 
-      port: 443,
-      protocol: elbv2.ApplicationProtocol.HTTPS,
-      open: true,
-      certificates: [ elbv2.ListenerCertificate.fromArn(props.albCertificateArn) ]
-    });
-    const targetGroup = httpsListener.addTargets('moodle-service-tg', {
-      port: 8080,
-      targets: [
-        moodleService.loadBalancerTarget({
-          containerName: 'moodle',
-          containerPort: 8080,
-          protocol: ecs.Protocol.TCP
-        })
-      ],
-      healthCheck: {
-        timeout: cdk.Duration.seconds(20)
-      }
-    });
-
-    // CloudFront distribution
-    const cfWafWebAclArnReader = new SSMParameterReader(this, 'cf-waf-web-acl-arn-ssm-param-reader', {
-      parameterName: 'cf-waf-web-acl-arn',
-      region: 'us-east-1'
-    })
-
-    const cf = new cloudfront.Distribution(this, 'moodle-ecs-dist', {
-      defaultBehavior: {
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        origin: new origins.LoadBalancerV2Origin(alb, {
-          readTimeout: cdk.Duration.seconds(props.cfDistributionOriginTimeoutSeconds)
-        }),
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER
-      },
-      domainNames: [props.cfDomain],
-      certificate: acm.Certificate.fromCertificateArn(this, 'cFcert', props.cfCertificateArn.toString()),
-      webAclId: cfWafWebAclArnReader.getParameterValue()
-    });
+    // 8. DNS (only if not using existing certificates)
+    if (!props.useExistingAlbCertificate) {
+      new DnsConstruct(this, 'DNS', {
+        hostedZoneId: props.hostedZoneId,
+        domain: props.domain,
+        enableCloudFront: props.enableCloudFront,
+        distribution: cloudFront?.distribution,
+        loadBalancer: loadBalancer.loadBalancer
+      });
+    }
 
     // Outputs
+    this.createOutputs(props, loadBalancer, cloudFront, compute, cache);
+  }
+
+  private createOutputs(
+    props: EcsMoodleStackProps,
+    loadBalancer: LoadBalancerConstruct,
+    cloudFront: CloudFrontConstruct | undefined,
+    compute: ComputeConstruct,
+    cache: CacheConstruct
+  ): void {
     new cdk.CfnOutput(this, 'APPLICATION-LOAD-BALANCER-DNS-NAME', {
-      value: alb.loadBalancerDnsName
+      value: loadBalancer.loadBalancer.loadBalancerDnsName
     });
-    new cdk.CfnOutput(this, 'CLOUDFRONT-DNS-NAME', {
-      value: cf.distributionDomainName
-    });
+    
+    if (props.enableCloudFront && cloudFront) {
+      new cdk.CfnOutput(this, 'CLOUDFRONT-DNS-NAME', {
+        value: (!props.useExistingAlbCertificate) ? props.domain : cloudFront.distribution.distributionDomainName
+      });
+      new cdk.CfnOutput(this, 'MOODLE-CLOUDFRONT-DIST-ID', {
+        value: cloudFront.distribution.distributionId
+      });
+    } else {
+      new cdk.CfnOutput(this, 'MOODLE-DNS-NAME', {
+        value: (!props.useExistingAlbCertificate) ? props.domain : loadBalancer.loadBalancer.loadBalancerDnsName
+      });
+    }
+    
     new cdk.CfnOutput(this, 'MOODLE-USERNAME', {
       value: 'moodleadmin'
     });
     new cdk.CfnOutput(this, 'MOODLE-PASSWORD-SECRET-ARN', {
-      value: moodlePasswordSecret.secretArn
+      value: compute.moodlePasswordSecret.secretArn
     });
-    new cdk.CfnOutput(this, 'MOODLE-REDIS-PRIMARY-ENDPOINT-ADDRESS-AND-PORT', {
-      value: `${moodleRedis.attrPrimaryEndPointAddress}:${moodleRedis.attrPrimaryEndPointPort}`
+    new cdk.CfnOutput(this, 'MOODLE-CACHE-ENDPOINT-ADDRESS-AND-PORT', {
+      value: cache.endpoint
     });
     new cdk.CfnOutput(this, 'ECS-CLUSTER-NAME', {
-      value: cluster.clusterName
+      value: compute.cluster.clusterName
     });
     new cdk.CfnOutput(this, 'ECS-VPC-ID', {
-      value: vpc.vpcId
+      value: compute.cluster.vpc.vpcId
     });
     new cdk.CfnOutput(this, 'MOODLE-SERVICE-NAME', {
-      value: moodleService.serviceName
-    });
-    new cdk.CfnOutput(this, 'MOODLE-CLOUDFRONT-DIST-ID', {
-      value: cf.distributionId
+      value: compute.service.serviceName
     });
   }
 }
