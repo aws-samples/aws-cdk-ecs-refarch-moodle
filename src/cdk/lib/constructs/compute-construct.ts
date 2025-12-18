@@ -13,6 +13,7 @@ export interface ComputeConstructProps {
   database: rds.DatabaseInstance | rds.DatabaseCluster;
   fileSystem: efs.FileSystem;
   accessPoint: efs.AccessPoint;
+  cacheSecurityGroup: ec2.ISecurityGroup;
   containerPlatform: string;
   serviceReplicaDesiredCount: number;
   serviceHealthCheckGracePeriodSeconds: number;
@@ -198,5 +199,12 @@ export class ComputeConstruct extends Construct {
     
     // Allow access to EFS
     props.fileSystem.connections.allowDefaultPortFrom(this.service, 'From Moodle ECS Service');
+    
+    // Allow access to cache
+    props.cacheSecurityGroup.connections.allowFrom(
+      this.service, 
+      ec2.Port.tcp(6379), 
+      'From Moodle ECS Service'
+    );
   }
 }

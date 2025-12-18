@@ -79,6 +79,7 @@ export class EcsMoodleStack extends cdk.Stack {
       database: database.database,
       fileSystem: storage.fileSystem,
       accessPoint: storage.accessPoint,
+      cacheSecurityGroup: cache.securityGroup,
       containerPlatform: props.containerPlatform,
       serviceReplicaDesiredCount: props.serviceReplicaDesiredCount,
       serviceHealthCheckGracePeriodSeconds: props.serviceHealthCheckGracePeriodSeconds,
@@ -137,13 +138,6 @@ export class EcsMoodleStack extends cdk.Stack {
         loadBalancer: loadBalancer.loadBalancer
       });
     }
-
-    // Allow cache access from compute
-    cache.securityGroup.connections.allowFrom(
-      compute.service, 
-      ec2.Port.tcp(6379), 
-      'From Moodle ECS Service'
-    );
 
     // Outputs
     this.createOutputs(props, loadBalancer, cloudFront, compute, cache);
