@@ -4,6 +4,24 @@ This repository contains an [AWS Cloud Development Kit (AWS CDK)](https://aws.am
 
 **For detailed background and architecture overview, please visit the blog post:** [How to run Moodle LMS on serverless containers with AWS](https://aws.amazon.com/blogs/publicsector/modernize-moodle-lms-aws-serverless-containers/)
 
+## Architecture
+
+This sample creates a scalable Moodle deployment using AWS serverless services.
+
+![Moodle on AWS Serverless Services Architecture](docs/images/Moodle%20on%20AWS%20Serverless%20Services%20Architecture.png)
+
+This solution deploys:
+- Amazon ECS with AWS Fargate for running Moodle containers
+- Application Load Balancer for distributing traffic
+- Amazon Aurora Serverless v2 or provisioned for the database
+- Amazon ElastiCache (Redis or Valkey) in serverless or provisioned mode for caching
+- Amazon EFS for shared file storage
+- Amazon CloudFront for content delivery
+- AWS Secrets Manager for credential management
+- Amazon VPC with public and private subnets
+
+For more details, see the [blog post](https://aws.amazon.com/blogs/publicsector/modernize-moodle-lms-aws-serverless-containers/).
+
 ## Prerequisites
 
 1. [Install Node.js](https://nodejs.org/) (version 18 or later)
@@ -183,16 +201,3 @@ To delete the application infrastructure and avoid ongoing costs:
    
    Note: CDK automatically creates an ECR repository with a generated name (typically containing "cdk" and a hash). The `cdk destroy` command does not automatically delete ECR repositories that contain images.
 
-## Architecture
-
-This solution deploys:
-- Amazon ECS with AWS Fargate for running Moodle containers
-- Application Load Balancer for distributing traffic
-- Amazon Aurora Serverless v2 or provisioned for the database
-- Amazon ElastiCache (Redis or Valkey) in serverless or provisioned mode for caching
-- Amazon EFS for shared file storage
-- Amazon CloudFront for content delivery
-- AWS Secrets Manager for credential management
-- Amazon VPC with public and private subnets
-
-For more details, see the [blog post](https://aws.amazon.com/blogs/publicsector/modernize-moodle-lms-aws-serverless-containers/).
