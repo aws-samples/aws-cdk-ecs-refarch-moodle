@@ -3,7 +3,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as efs from 'aws-cdk-lib/aws-efs';
-import * as iam from 'aws-cdk-lib/aws-iam';
+
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
@@ -74,20 +74,6 @@ export class ComputeConstruct extends Construct {
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX
       }
     });
-
-    // Add execution role permissions
-    taskDefinition.addToExecutionRolePolicy(iam.PolicyStatement.fromJson({
-      "Effect": "Allow",
-      "Action": [
-        "ecr:GetAuthorizationToken",
-        "ecr:BatchCheckLayerAvailability",
-        "ecr:GetDownloadUrlForLayer",
-        "ecr:BatchGetImage",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents"
-      ],
-      "Resource": "*"
-    }));
 
     // EFS Volume
     taskDefinition.addVolume({
