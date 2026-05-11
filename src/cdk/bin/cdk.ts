@@ -133,7 +133,7 @@ function validateCertificateConfiguration(
       throw new Error('domain must be set when certificate ARN is not provided');
     }
     // Validate domain format (must have at least one dot)
-    const domainPattern = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?(\.[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?)+$/;
+    const domainPattern = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(?:\.(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?))+$/;
     if (!domainPattern.test(domain)) {
       throw new Error(`Invalid domain format: ${domain}`);
     }
