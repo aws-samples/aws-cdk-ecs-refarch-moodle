@@ -11,6 +11,7 @@ ENV APACHE_LOCK_DIR=/var/lock/apache2
 
 # Install packages, download Moodle, and configure Apache in one layer
 RUN apt-get update -y && \
+    apt-get upgrade -y && \
     apt-get install -y wget cron sudo logrotate && \
     apt-get clean
 
