@@ -89,9 +89,15 @@ $CFG->preventexecpath = true;\
     fi
 else
     echo "Restoring from persistent storage..."
-    echo "Running Moodle upgrade..."
+    
+    # Re-apply ownership to ensure www-data can access all files
+    # (handles UID mapping changes between container image versions)
+    echo "Ensuring correct file ownership..."
+    chown -R www-data:www-data "$MOUNT_DIR/moodle" "$MOUNT_DIR/moodledata"
+    
+    echo "Running Moodle upgrade as www-data..."
     cd "$MOODLE_DIR"
-    php admin/cli/upgrade.php --non-interactive
+    sudo -u www-data php admin/cli/upgrade.php --non-interactive
     echo "Moodle upgrade completed"
 fi
 
