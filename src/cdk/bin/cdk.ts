@@ -8,13 +8,73 @@ const app = new cdk.App();
 
 const domain = app.node.tryGetContext('app-config/domain');
 const hostedZoneId = app.node.tryGetContext('app-config/hostedZoneId');
-const enableCloudFront = app.node.tryGetContext('app-config/enableCloudFront') ?? true;
+
+// Coerce a context value to a boolean. CDK context from a JSON file arrives as a
+// real boolean, but values passed via `--context key=value` on the CLI arrive as
+// strings, so "false" must not be treated as truthy.
+function contextBoolean(value: unknown, defaultValue: boolean): boolean {
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'true') {
+    return true;
+  }
+  if (normalized === 'false') {
+    return false;
+  }
+  throw new Error(`Expected a boolean value but received: ${String(value)}`);
+}
+
+// ALB scheme: controls whether the ALB is internal or internet-facing.
+const albScheme = app.node.tryGetContext('app-config/albScheme');
+// Whether the ALB is hardened as a CloudFront origin (custom-header rule, 403
+// default action, restricted ingress via the CloudFront prefix list) and owns
+// the origin-verification secret.
+const albCloudFrontOrigin = contextBoolean(app.node.tryGetContext('app-config/albCloudFrontOrigin'), true);
+// Whether THIS stack builds the CloudFront distribution (plus its cert/WAF infra
+// and logging). When false, a separate stack is expected to own the distribution.
+const deployCloudFront = contextBoolean(app.node.tryGetContext('app-config/deployCloudFront'), true);
 let cfCertificateArn = app.node.tryGetContext('app-config/cfCertificateArn');
 let albCertificateArn = app.node.tryGetContext('app-config/albCertificateArn')
 
 // Validate required configuration
 if (!domain) {
   throw new Error('domain must be set in the CDK context');
+}
+
+// Validate ALB scheme configuration
+if (albScheme !== 'internal' && albScheme !== 'internet-facing') {
+  throw new Error("app-config/albScheme must be set to either 'internal' or 'internet-facing'");
+}
+const albInternetFacing = albScheme === 'internet-facing';
+
+// This stack can only build a CloudFront distribution when the ALB is a
+// CloudFront origin (hardened) and internal (reachable only via the VPC origin).
+if (deployCloudFront && !albCloudFrontOrigin) {
+  throw new Error(
+    "app-config/deployCloudFront cannot be true when app-config/albCloudFrontOrigin is false; " +
+    "a CloudFront distribution requires the ALB to be configured as a CloudFront origin"
+  );
+}
+if (deployCloudFront && albInternetFacing) {
+  throw new Error(
+    "app-config/albScheme cannot be 'internet-facing' when app-config/deployCloudFront is true; " +
+    "a CloudFront-fronted ALB must be 'internal'"
+  );
+}
+
+// A hardened CloudFront origin must be internal so it is only reachable via the
+// CloudFront VPC origin. A public (internet-facing) CloudFront origin is not
+// supported.
+if (albCloudFrontOrigin && albInternetFacing) {
+  throw new Error(
+    "app-config/albScheme cannot be 'internet-facing' when app-config/albCloudFrontOrigin is true; " +
+    "a CloudFront origin ALB must be 'internal'"
+  );
 }
 
 // Derive hostName and domainName from domain
@@ -37,7 +97,7 @@ const useExistingAlbCertificate = validateCertificateConfiguration(
 let cloudFrontInfraStack: CloudFrontInfraStack | undefined;
 let cfWafArn: string | undefined;
 
-if (enableCloudFront) {
+if (deployCloudFront) {
   cloudFrontInfraStack = new CloudFrontInfraStack(app, 'cloudfront-infra-stack', {
     env: {
       region: 'us-east-1',
@@ -61,8 +121,10 @@ const ecsMoodleStack = new EcsMoodleStack(app, 'ecs-moodle-stack', {
     region: process.env.CDK_DEFAULT_REGION,
     account: process.env.CDK_DEFAULT_ACCOUNT
   },
-  crossRegionReferences: enableCloudFront,
-  enableCloudFront: enableCloudFront,
+  crossRegionReferences: deployCloudFront,
+  deployCloudFront: deployCloudFront,
+  albCloudFrontOrigin: albCloudFrontOrigin,
+  albInternetFacing: albInternetFacing,
   useExistingAlbCertificate: useExistingAlbCertificate,
   hostedZoneId: app.node.tryGetContext('app-config/hostedZoneId'),
   albCertificateArn: albCertificateArn,
@@ -92,8 +154,8 @@ if (cloudFrontInfraStack) {
   ecsMoodleStack.addDependency(cloudFrontInfraStack);
 }
 
-// Create logging stack in us-east-1 with distribution ARN (only if CloudFront is enabled)
-if (enableCloudFront) {
+// Create logging stack in us-east-1 with distribution ARN (only if this stack deploys CloudFront)
+if (deployCloudFront) {
   const cloudFrontLoggingStack = new CloudFrontLoggingStack(app, 'cloudfront-logging-stack', {
     env: {
       region: 'us-east-1',

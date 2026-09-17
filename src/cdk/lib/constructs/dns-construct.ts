@@ -7,7 +7,7 @@ import { Construct } from 'constructs';
 export interface DnsConstructProps {
   hostedZoneId: string;
   domain: string;
-  enableCloudFront: boolean;
+  deployCloudFront: boolean;
   distribution?: cloudfront.Distribution;
   loadBalancer?: elbv2.ApplicationLoadBalancer;
 }
@@ -29,7 +29,7 @@ export class DnsConstruct extends Construct {
     });
 
     // Create DNS records based on configuration
-    if (props.enableCloudFront && props.distribution) {
+    if (props.deployCloudFront && props.distribution) {
       this.createCloudFrontRecords(props.domain, props.distribution);
     } else if (props.loadBalancer) {
       this.createLoadBalancerRecords(props.domain, props.loadBalancer);

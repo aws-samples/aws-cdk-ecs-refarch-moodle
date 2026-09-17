@@ -11,7 +11,9 @@ import { NetworkConstruct } from './constructs/network-construct';
 import { StorageConstruct } from './constructs/storage-construct';
 
 export interface EcsMoodleStackProps extends cdk.StackProps {
-  enableCloudFront: boolean;
+  deployCloudFront: boolean;
+  albCloudFrontOrigin: boolean;
+  albInternetFacing: boolean;
   useExistingAlbCertificate: boolean;
   hostedZoneId: string;
   albCertificateArn: string;
@@ -90,9 +92,13 @@ export class EcsMoodleStack extends cdk.Stack {
       moodleImageUri: props.moodleImageUri
     });
 
-    // Generate CloudFront custom header secret if CloudFront is enabled
+    // Generate the CloudFront origin-verification secret whenever the ALB is
+    // hardened as a CloudFront origin. This stack owns the secret; a CloudFront
+    // distribution (built here or in a separate stack) sends its value in the
+    // X-Origin-Verify header. When the distribution lives in another stack, the
+    // secret ARN is exposed as an output for that stack to consume.
     let cfCustomHeaderSecret: secretsmanager.Secret | undefined;
-    if (props.enableCloudFront) {
+    if (props.albCloudFrontOrigin) {
       cfCustomHeaderSecret = new secretsmanager.Secret(this, 'cf-custom-header-secret', {
         generateSecretString: {
           excludePunctuation: true,
@@ -105,7 +111,8 @@ export class EcsMoodleStack extends cdk.Stack {
     const loadBalancer = new LoadBalancerConstruct(this, 'LoadBalancer', {
       vpc: network.vpc,
       service: compute.service,
-      enableCloudFront: props.enableCloudFront,
+      albCloudFrontOrigin: props.albCloudFrontOrigin,
+      albInternetFacing: props.albInternetFacing,
       useExistingAlbCertificate: props.useExistingAlbCertificate,
       albCertificateArn: props.albCertificateArn,
       hostedZoneId: props.hostedZoneId,
@@ -113,9 +120,9 @@ export class EcsMoodleStack extends cdk.Stack {
       cfCustomHeaderSecret
     });
 
-    // 7. CloudFront (optional)
+    // 7. CloudFront (optional) - only when this stack owns the distribution
     let cloudFront: CloudFrontConstruct | undefined;
-    if (props.enableCloudFront && cfCustomHeaderSecret && props.cfCertificateArn && props.cfWafArn) {
+    if (props.deployCloudFront && cfCustomHeaderSecret && props.cfCertificateArn && props.cfWafArn) {
       cloudFront = new CloudFrontConstruct(this, 'CloudFront', {
         loadBalancer: loadBalancer.loadBalancer,
         cfCustomHeaderSecret,
@@ -128,19 +135,25 @@ export class EcsMoodleStack extends cdk.Stack {
       this.distributionArn = cloudFront.distribution.distributionArn;
     }
 
-    // 8. DNS (only if not using existing certificates)
-    if (!props.useExistingAlbCertificate) {
+    // 8. DNS
+    // Only this stack manages the public domain record, and only when it owns a
+    // routable endpoint: a CloudFront distribution it deploys, or a directly
+    // reachable (internet-facing) ALB. When the ALB is a CloudFront origin for a
+    // distribution owned by a separate stack, that stack owns the DNS record.
+    const managesDns = !props.useExistingAlbCertificate &&
+      (props.deployCloudFront || !props.albCloudFrontOrigin);
+    if (managesDns) {
       new DnsConstruct(this, 'DNS', {
         hostedZoneId: props.hostedZoneId,
         domain: props.domain,
-        enableCloudFront: props.enableCloudFront,
+        deployCloudFront: props.deployCloudFront,
         distribution: cloudFront?.distribution,
         loadBalancer: loadBalancer.loadBalancer
       });
     }
 
     // Outputs
-    this.createOutputs(props, loadBalancer, cloudFront, compute, cache);
+    this.createOutputs(props, loadBalancer, cloudFront, compute, cache, cfCustomHeaderSecret);
   }
 
   private createOutputs(
@@ -148,13 +161,27 @@ export class EcsMoodleStack extends cdk.Stack {
     loadBalancer: LoadBalancerConstruct,
     cloudFront: CloudFrontConstruct | undefined,
     compute: ComputeConstruct,
-    cache: CacheConstruct
+    cache: CacheConstruct,
+    cfCustomHeaderSecret: secretsmanager.Secret | undefined
   ): void {
     new cdk.CfnOutput(this, 'APPLICATION-LOAD-BALANCER-DNS-NAME', {
       value: loadBalancer.loadBalancer.loadBalancerDnsName
     });
+
+    // Expose the ALB ARN and the origin-verification secret ARN so a separately
+    // deployed CloudFront stack can wire up the VPC origin and custom header.
+    if (props.albCloudFrontOrigin && !props.deployCloudFront) {
+      new cdk.CfnOutput(this, 'ALB-ARN', {
+        value: loadBalancer.loadBalancer.loadBalancerArn
+      });
+      if (cfCustomHeaderSecret) {
+        new cdk.CfnOutput(this, 'CF-ORIGIN-VERIFY-SECRET-ARN', {
+          value: cfCustomHeaderSecret.secretArn
+        });
+      }
+    }
     
-    if (props.enableCloudFront && cloudFront) {
+    if (props.deployCloudFront && cloudFront) {
       new cdk.CfnOutput(this, 'CLOUDFRONT-DNS-NAME', {
         value: (!props.useExistingAlbCertificate) ? props.domain : cloudFront.distribution.distributionDomainName
       });

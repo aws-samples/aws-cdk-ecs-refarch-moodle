@@ -10,7 +10,8 @@ import { Construct } from 'constructs';
 export interface LoadBalancerConstructProps {
   vpc: ec2.IVpc;
   service: ecs.FargateService;
-  enableCloudFront: boolean;
+  albCloudFrontOrigin: boolean;
+  albInternetFacing: boolean;
   useExistingAlbCertificate: boolean;
   albCertificateArn?: string;
   hostedZoneId?: string;
@@ -31,13 +32,15 @@ export class LoadBalancerConstruct extends Construct {
 
     // Create Application Load Balancer
     this.loadBalancer = new elbv2.ApplicationLoadBalancer(this, 'alb', {
-      loadBalancerName: props.enableCloudFront ? 'moodle-ecs-alb' : 'moodle-ecs-alb-direct',
+      // Name is based on scheme (not CloudFront), so toggling CloudFront on/off
+      // for a given scheme does not rename the ALB and force a replacement.
+      loadBalancerName: props.albInternetFacing ? 'moodle-ecs-alb-direct' : 'moodle-ecs-alb',
       vpc: props.vpc,
-      internetFacing: !props.enableCloudFront,
+      internetFacing: props.albInternetFacing,
       vpcSubnets: { 
-        subnetType: props.enableCloudFront 
-          ? ec2.SubnetType.PRIVATE_WITH_EGRESS 
-          : ec2.SubnetType.PUBLIC 
+        subnetType: props.albInternetFacing 
+          ? ec2.SubnetType.PUBLIC 
+          : ec2.SubnetType.PRIVATE_WITH_EGRESS 
       }
     });
 
@@ -64,9 +67,12 @@ export class LoadBalancerConstruct extends Construct {
     this.httpsListener = this.loadBalancer.addListener('https-listener', {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
-      open: !props.enableCloudFront,
+      // When acting as a CloudFront origin, the listener is not opened to the
+      // world; ingress is restricted to the CloudFront prefix list and gated by
+      // the custom-header rule. Otherwise the listener is open for direct access.
+      open: !props.albCloudFrontOrigin,
       certificates: [elbv2.ListenerCertificate.fromArn(albCertificateArn)],
-      defaultAction: props.enableCloudFront 
+      defaultAction: props.albCloudFrontOrigin 
         ? elbv2.ListenerAction.fixedResponse(403, {
             contentType: 'text/plain',
             messageBody: 'Access denied'
@@ -74,13 +80,13 @@ export class LoadBalancerConstruct extends Construct {
         : elbv2.ListenerAction.forward([this.targetGroup])
     });
 
-    // Configure CloudFront-specific rules
-    if (props.enableCloudFront && props.cfCustomHeaderSecret) {
+    // Configure CloudFront origin verification rule
+    if (props.albCloudFrontOrigin && props.cfCustomHeaderSecret) {
       this.setupCloudFrontAccess(props.cfCustomHeaderSecret);
     }
 
     // Configure security groups
-    this.setupSecurityGroups(props.enableCloudFront);
+    this.setupSecurityGroups(props.albCloudFrontOrigin);
   }
 
   private getCertificateArn(props: LoadBalancerConstructProps): string {
@@ -124,8 +130,8 @@ export class LoadBalancerConstruct extends Construct {
     });
   }
 
-  private setupSecurityGroups(enableCloudFront: boolean): void {
-    if (enableCloudFront) {
+  private setupSecurityGroups(albCloudFrontOrigin: boolean): void {
+    if (albCloudFrontOrigin) {
       const cfPrefixList = ec2.PrefixList.fromLookup(this, 'cloudfront-prefix-list', {
         prefixListName: 'com.amazonaws.global.cloudfront.origin-facing'
       });

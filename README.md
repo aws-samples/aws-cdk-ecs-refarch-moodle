@@ -100,11 +100,29 @@ If you prefer to manage certificates or DNS manually:
    
    **Common configuration for both options:**
    
-   CloudFront Configuration:
-   - `app-config/enableCloudFront`: Set to `true` to deploy CloudFront distribution (default), or `false` to access Moodle directly via ALB (default: `true`)
-     - When `true`: Moodle is accessed through CloudFront with the ALB in private subnets
-     - When `false`: Moodle is accessed directly via the ALB in public subnets (CloudFront is not deployed)
-   - `app-config/cfDistributionOriginTimeoutSeconds`: CloudFront origin response timeout in seconds (default: `60`) - only used when `enableCloudFront` is `true`
+   Load Balancer and CloudFront Configuration:
+
+   Three independent flags control the load balancer scheme, whether the ALB is hardened as a CloudFront origin, and whether this stack deploys its own CloudFront distribution.
+
+   - `app-config/albScheme`: **Required.** Controls whether the Application Load Balancer is `internal` or `internet-facing`
+     - `internal`: ALB is placed in private subnets and is not reachable directly from the internet. Required whenever the ALB serves as a CloudFront origin (reachable only through the CloudFront VPC origin)
+     - `internet-facing`: ALB is placed in public subnets and is reachable directly from the internet. Use for direct ALB access with no CloudFront in front
+   - `app-config/albCloudFrontOrigin`: Set to `true` (default) to harden the ALB as a CloudFront origin, or `false` for direct access
+     - When `true`: the ALB requires the CloudFront custom origin-verification header, its listener defaults to a 403 response, and ingress is restricted to the CloudFront managed prefix list. This stack also creates the origin-verification secret and exposes its ARN as the `CFORIGINVERIFYSECRETARN` output
+     - When `false`: the ALB forwards traffic directly and its listener is open for direct access
+   - `app-config/deployCloudFront`: Set to `true` (default) to have **this** stack deploy the CloudFront distribution (plus its ACM certificate, WAF, and logging), or `false` if a separate stack owns the distribution
+     - When `false` with `albCloudFrontOrigin: true`: this stack builds an internal, origin-hardened ALB but no CloudFront distribution. A separately deployed CloudFront stack is expected to own the distribution, certificate, WAF, VPC origin, and public DNS record. Retrieve the ALB ARN (`ALBARN` output) and the origin-verification secret ARN (`CFORIGINVERIFYSECRETARN` output) from this stack and wire them into that stack manually
+   - `app-config/cfDistributionOriginTimeoutSeconds`: CloudFront origin response timeout in seconds (default: `60`) - only used when `deployCloudFront` is `true`
+
+   Supported combinations:
+
+   | Mode | `albScheme` | `albCloudFrontOrigin` | `deployCloudFront` |
+   |---|---|---|---|
+   | CloudFront deployed by this stack (default) | `internal` | `true` | `true` |
+   | CloudFront owned by a separate stack | `internal` | `true` | `false` |
+   | Direct ALB access, no CloudFront | `internet-facing` | `false` | `false` |
+
+   Validation rejects invalid combinations: `deployCloudFront: true` requires `albCloudFrontOrigin: true` and `albScheme: internal`; and `albScheme: internet-facing` cannot be combined with `albCloudFrontOrigin: true`.
    
    Container Configuration:
    - `app-config/containerPlatform`: Set to `"ARM"` or `"X86"` based on your preference (default: `"ARM"`)
@@ -149,20 +167,24 @@ If you prefer to manage certificates or DNS manually:
 1. Once successfully deployed, Moodle begins first-time installation, which takes approximately 15-20 minutes. Check the progress by viewing the logs in the Amazon ECS console.
 
 1. After installation completes, you can access the application:
-   - **If CloudFront is enabled** (`enableCloudFront: true`): Use the CloudFront URL shown in the deployment output `CLOUDFRONTDNSNAME`
-   - **If CloudFront is disabled** (`enableCloudFront: false`): Use the ALB URL shown in the deployment output `MOODLEDNSNAME` 
+   - **If this stack deploys CloudFront** (`deployCloudFront: true`): Use the CloudFront URL shown in the deployment output `CLOUDFRONTDNSNAME`
+   - **If a separate stack owns CloudFront** (`deployCloudFront: false`, `albCloudFrontOrigin: true`): Access is served by that separate CloudFront distribution. This stack does not expose a public URL; use the `ALBARN` and `CFORIGINVERIFYSECRETARN` outputs to wire up the external distribution
+   - **If accessing the ALB directly** (`albCloudFrontOrigin: false`, `albScheme: internet-facing`): Use the ALB URL shown in the deployment output `MOODLEDNSNAME`
 
 ## Post-deployment steps
 
 1. **(Required if you followed Option 2 for manual certificate setup)** Configure DNS records:
    
-   **If CloudFront is enabled** (`enableCloudFront: true`):
+   **If this stack deploys CloudFront** (`deployCloudFront: true`):
    - Create DNS records for your domain pointing to the CloudFront distribution from the `CLOUDFRONTDNSNAME` output
    - If using Route 53: Create Alias records (A and AAAA) pointing to the CloudFront distribution
    - If using another DNS provider: Create a CNAME record pointing to the CloudFront distribution DNS name
    - Example: `moodle.example.com` → `abcd1234efgh.cloudfront.net`
+
+   **If a separate stack owns CloudFront** (`deployCloudFront: false`, `albCloudFrontOrigin: true`):
+   - This stack does not manage the public DNS record. The separate CloudFront stack owns the domain record pointing to its distribution
    
-   **If CloudFront is disabled** (`enableCloudFront: false`):
+   **If accessing the ALB directly** (`albCloudFrontOrigin: false`, `albScheme: internet-facing`):
    - Create DNS records for your domain pointing to the Application Load Balancer from the `MOODLEDNSNAME` output
    - If using Route 53: Create Alias records (A and AAAA) pointing to the ALB
    - If using another DNS provider: Create a CNAME record pointing to the ALB DNS name
