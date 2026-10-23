@@ -1,5 +1,9 @@
 FROM moodlehq/moodle-php-apache:8.4 
 
+# Cache-busting arg: change its value (via CDK buildArgs) to force this and all
+# subsequent layers to rebuild, picking up a freshly pulled base image.
+ARG CACHE_BUST
+
 # Set Apache environment variables
 ENV APACHE_DOCUMENT_ROOT=/var/www/html
 ENV APACHE_RUN_USER=www-data
