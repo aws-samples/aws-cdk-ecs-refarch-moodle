@@ -92,7 +92,14 @@ export class ComputeConstruct extends Construct {
     const moodleImage = props.moodleImageUri 
       ? ecs.ContainerImage.fromRegistry(props.moodleImageUri)
       : ecs.ContainerImage.fromAsset('../image/src', {
-          platform: containerPlatform === 'ARM' ? Platform.LINUX_ARM64 : Platform.LINUX_AMD64
+          platform: containerPlatform === 'ARM' ? Platform.LINUX_ARM64 : Platform.LINUX_AMD64,
+          invalidation: { buildArgs: true },
+          buildArgs: {
+            // Bump CACHE_BUST (or set the env var) to force a fresh base-image
+            // pull and a new asset hash. Needed because the FROM tag floats and
+            // the local build layer cache can otherwise reuse a stale PHP base.
+            CACHE_BUST: process.env.CACHE_BUST ?? 'php-8.4.27'
+          }
         });
 
     // Container Definition
