@@ -46,7 +46,9 @@ export class EcsMoodleStack extends cdk.Stack {
     super(scope, id, props);
 
     // 1. Network Infrastructure
-    const network = new NetworkConstruct(this, 'Network');
+    const network = new NetworkConstruct(this, 'Network', {
+      allowCloudFrontVpcOriginIngress: props.albCloudFrontOrigin && !props.albInternetFacing
+    });
 
     // 2. Database
     const database = new DatabaseConstruct(this, 'Database', {

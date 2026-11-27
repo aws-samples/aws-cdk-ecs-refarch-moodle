@@ -8,6 +8,9 @@ import { Construct } from 'constructs';
 export interface NetworkConstructProps {
   enableFlowLogs?: boolean;
   enableCloudTrail?: boolean;
+  // CloudFront VPC origin connections to an internal ALB are terminated by
+  // VPC Block Public Access unless the ALB's private subnets are excluded.
+  allowCloudFrontVpcOriginIngress?: boolean;
 }
 
 export class NetworkConstruct extends Construct {
@@ -56,6 +59,18 @@ export class NetworkConstruct extends Construct {
       service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS
     });
 
+    // Subnet-scoped exclusions keep the rest of the VPC under the account's BPA mode.
+    // These subnets have no IGW route, and the ALB security group only admits the
+    // CloudFront origin-facing prefix list, so bidirectional mode adds no other path.
+    if (props.allowCloudFrontVpcOriginIngress) {
+      this.vpc.privateSubnets.forEach((subnet, index) => {
+        new ec2.CfnVPCBlockPublicAccessExclusion(this, `bpa-exclusion-private-${index}`, {
+          subnetId: subnet.subnetId,
+          internetGatewayExclusionMode: 'allow-bidirectional',
+          tags: [{ key: 'Purpose', value: 'CloudFront VPC origin ingress' }]
+        });
+      });
+    }
     // CloudTrail (optional)
     if (props.enableCloudTrail !== false) {
       const trailBucket = new s3.Bucket(this, 'cloudtrail-bucket', {
